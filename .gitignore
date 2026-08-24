@@ -1,0 +1,27 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local audit inputs, third-party source snapshots, and generated packs
+references/
+work/
+nexo_extracted/
+craftengine_output/
+.pnpm-store/
+*.jar
+*.zip
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# Editor and operating-system metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

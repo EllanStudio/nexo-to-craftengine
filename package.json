@@ -1,0 +1,36 @@
+{
+  "name": "nexo-to-craftengine",
+  "version": "0.1.0",
+  "description": "Semantics-aware Nexo 1.26 to CraftEngine converter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EllanStudio/nexo-to-craftengine.git"
+  },
+  "homepage": "https://github.com/EllanStudio/nexo-to-craftengine#readme",
+  "bugs": "https://github.com/EllanStudio/nexo-to-craftengine/issues",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "nexo2ce": "dist/src/cli.js",
+    "nexo2ce-web": "dist/src/web-server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test --test-isolation=none dist/test/**/*.test.js",
+    "start": "node dist/src/cli.js",
+    "web": "npm run build && node dist/src/web-server.js",
+    "web:no-open": "npm run build && node dist/src/web-server.js --no-open"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@11.7.0+sha512.19cc852c120c7125760f2443ee6be0ca5b40f9f50598de1a09a1f177503e010e57c23c77646e01e761de59bf874fb22a3398c33ab9691fc13eb946b6f0f4d620"
+}

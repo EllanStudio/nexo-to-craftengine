@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="本地 Nexo 1.26 到 CraftEngine 26.8 语义转换器">
+  <title>Nexo → CraftEngine 本地转换器</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/vendor/fflate.js" defer></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Nexo 转 CraftEngine 首页">
+      <span class="brand-mark" aria-hidden="true">N</span>
+      <span>Nexo<span class="brand-arrow">→</span>CraftEngine</span>
+    </a>
+    <div class="local-badge"><span class="pulse-dot" aria-hidden="true"></span>仅在本机运行 · 127.0.0.1</div>
+  </header>
+
+  <main class="shell">
+    <section class="hero" aria-labelledby="page-title">
+      <p class="eyebrow">SEMANTICS-AWARE MIGRATION</p>
+      <h1 id="page-title">把 Nexo 包转换为<br><span>CraftEngine 包</span></h1>
+      <p class="hero-copy">选择完整的 Nexo 文件夹或 ZIP。转换器会自动寻找 Nexo 根目录，按 Minecraft 1.21.11 客户端语义转换，并生成可下载的 CraftEngine ZIP。</p>
+    </section>
+
+    <ol class="stepper" aria-label="转换步骤">
+      <li class="step is-active" data-step="select"><span>1</span><strong>选择来源</strong></li>
+      <li class="step" data-step="configure"><span>2</span><strong>配置选项</strong></li>
+      <li class="step" data-step="convert"><span>3</span><strong>执行转换</strong></li>
+      <li class="step" data-step="download"><span>4</span><strong>下载结果</strong></li>
+    </ol>
+
+    <section class="panel input-panel" aria-labelledby="input-title">
+      <div class="panel-heading">
+        <div>
+          <p class="section-index">01 / INPUT</p>
+          <h2 id="input-title">选择 Nexo 来源</h2>
+        </div>
+        <button id="changeInputButton" class="text-button is-hidden" type="button">更换来源</button>
+      </div>
+
+      <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-describedby="drop-help">
+        <div class="drop-icon" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img"><path d="M24 7v24m0-24-8 8m8-8 8 8M10 29v7a5 5 0 0 0 5 5h18a5 5 0 0 0 5-5v-7"/></svg>
+        </div>
+        <h3>拖入 Nexo 文件夹或 ZIP</h3>
+        <p id="drop-help">需要包含 items/ 或 item/；请同时提供资源包 assets。</p>
+        <div class="picker-actions">
+          <button id="chooseFolderButton" class="primary-button" type="button">
+            <span aria-hidden="true">▣</span>选择文件夹
+          </button>
+          <button id="chooseZipButton" class="secondary-button" type="button">
+            <span aria-hidden="true">◇</span>选择 ZIP
+          </button>
+        </div>
+        <input id="folderInput" class="visually-hidden" type="file" webkitdirectory directory multiple>
+        <input id="zipInput" class="visually-hidden" type="file" accept=".zip,application/zip">
+      </div>
+
+      <div id="inputSummary" class="input-summary is-hidden" aria-live="polite">
+        <div id="sourceIcon" class="source-icon" aria-hidden="true">ZIP</div>
+        <div class="source-main">
+          <strong id="sourceName">—</strong>
+          <span id="sourceDetail">—</span>
+        </div>
+        <div class="source-metrics">
+          <span><b id="sourceFiles">0</b> 文件</span>
+          <span><b id="sourceSize">0 B</b> 原始大小</span>
+        </div>
+        <div id="detectionLine" class="detection-line"></div>
+      </div>
+      <p id="inputError" class="field-error is-hidden" role="alert"></p>
+    </section>
+
+    <section id="optionsPanel" class="panel options-panel" aria-labelledby="options-title">
+      <div class="panel-heading">
+        <div>
+          <p class="section-index">02 / OPTIONS</p>
+          <h2 id="options-title">转换选项</h2>
+        </div>
+        <span class="defaults-chip">已使用安全默认值</span>
+      </div>
+
+      <fieldset id="optionsFieldset">
+        <legend class="visually-hidden">CraftEngine 转换选项</legend>
+        <div class="options-grid">
+          <div class="field namespace-field">
+            <span class="field-label">命名空间</span>
+            <div class="namespace-auto"><b>自动识别</b><code>读取作者原包</code></div>
+            <small>优先读取作者在原包结构和配置文件中使用的命名空间，例如 lanshan_chinese_2；无需手动填写</small>
+          </div>
+
+          <label class="field" for="clientModeSelect">
+            <span class="field-label">客户端模式</span>
+            <select id="clientModeSelect">
+              <option value="hybrid" selected>Hybrid · 现代 + 传统</option>
+              <option value="modern">Modern · 1.21.4+</option>
+              <option value="legacy">Legacy · 传统 CMD</option>
+            </select>
+            <small>控制 ItemModel 和 CMD fallback 的生成方式</small>
+          </label>
+
+          <label class="field" for="cmdPolicySelect">
+            <span class="field-label">CMD 策略</span>
+            <select id="cmdPolicySelect">
+              <option value="preserve" selected>Preserve · 只保留明确值</option>
+              <option value="allocate">Allocate · 重建缺失值</option>
+              <option value="omit">Omit · 不输出 CMD</option>
+            </select>
+            <small>Allocate 仅适合已经收集全部物品配置的包</small>
+          </label>
+
+          <div class="toggle-stack">
+            <label class="toggle-row" for="auditInput">
+              <span><strong>资源图审计</strong><small>检查模型、纹理和 blueprint 引用</small></span>
+              <input id="auditInput" type="checkbox" checked><i aria-hidden="true"></i>
+            </label>
+            <label class="toggle-row" for="strictInput">
+              <span><strong>严格模式</strong><small>遇到任何有损映射就标记失败</small></span>
+              <input id="strictInput" type="checkbox"><i aria-hidden="true"></i>
+            </label>
+          </div>
+        </div>
+      </fieldset>
+    </section>
+
+    <section id="actionBar" class="action-bar" aria-label="转换操作">
+      <div>
+        <strong id="readyTitle">等待选择 Nexo 包</strong>
+        <span id="readyDetail">文件只会发送到本机转换服务</span>
+      </div>
+      <div class="action-buttons">
+        <button id="clearButton" class="ghost-button" type="button" disabled>清除</button>
+        <button id="convertButton" class="convert-button" type="button" disabled>
+          <span>开始转换</span><b aria-hidden="true">→</b>
+        </button>
+      </div>
+    </section>
+
+    <section id="progressPanel" class="panel progress-panel is-hidden" aria-labelledby="progress-title">
+      <div class="panel-heading">
+        <div>
+          <p class="section-index">03 / CONVERT</p>
+          <h2 id="progress-title">正在转换</h2>
+        </div>
+        <span id="elapsedTime" class="elapsed">00:00</span>
+      </div>
+      <div class="progress-list">
+        <div id="packageRow" class="progress-row">
+          <span class="phase-icon" aria-hidden="true">1</span>
+          <div><strong>打包来源</strong><small id="packageText">等待</small></div>
+          <progress id="packageProgress" max="100" value="0" aria-label="打包来源进度"></progress>
+        </div>
+        <div id="uploadRow" class="progress-row">
+          <span class="phase-icon" aria-hidden="true">2</span>
+          <div><strong>上传到本机</strong><small id="uploadText">等待</small></div>
+          <progress id="uploadProgress" max="100" value="0" aria-label="本机上传进度"></progress>
+        </div>
+        <div id="convertRow" class="progress-row">
+          <span class="phase-icon" aria-hidden="true">3</span>
+          <div><strong>语义转换与审计</strong><small id="convertText">等待</small></div>
+          <progress id="convertProgress" max="100" value="0" aria-label="转换进度"></progress>
+        </div>
+        <div id="downloadRow" class="progress-row">
+          <span class="phase-icon" aria-hidden="true">4</span>
+          <div><strong>接收结果</strong><small id="downloadText">等待</small></div>
+          <progress id="downloadProgress" max="100" value="0" aria-label="结果下载进度"></progress>
+        </div>
+      </div>
+      <div class="progress-footer">
+        <p id="liveStatus" role="status" aria-live="polite">准备转换…</p>
+        <button id="cancelButton" class="text-button danger-text" type="button">取消</button>
+      </div>
+    </section>
+
+    <section id="resultPanel" class="panel result-panel is-hidden" aria-labelledby="result-title">
+      <div id="resultBanner" class="result-banner">
+        <div id="resultMark" class="result-mark" aria-hidden="true">✓</div>
+        <div>
+          <p id="resultEyebrow" class="section-index">04 / COMPLETE</p>
+          <h2 id="result-title" tabindex="-1">转换完成</h2>
+          <p id="resultMessage">CraftEngine ZIP 已经准备好。</p>
+        </div>
+        <button id="downloadButton" class="download-button" type="button">下载 CraftEngine ZIP <span aria-hidden="true">↓</span></button>
+      </div>
+
+      <div id="resultStats" class="stats-grid" aria-label="转换统计"></div>
+
+      <div class="result-columns">
+        <section class="audit-card" aria-labelledby="audit-title">
+          <div class="subheading"><h3 id="audit-title">资源审计</h3><span id="auditBadge">—</span></div>
+          <dl id="auditSummary"></dl>
+        </section>
+        <section class="diagnostic-card" aria-labelledby="diagnostic-title">
+          <div class="subheading"><h3 id="diagnostic-title">诊断摘要</h3><span id="diagnosticBadge">0</span></div>
+          <div id="diagnosticSummary" class="diagnostic-summary"></div>
+        </section>
+      </div>
+
+      <details id="diagnosticDetails" class="diagnostic-details">
+        <summary>查看全部诊断 <span id="diagnosticCount">0</span></summary>
+        <div id="diagnosticList" class="diagnostic-list"></div>
+      </details>
+      <div class="result-footer">
+        <p>ZIP 内包含 conversion-report.json 和 migration-mapping.yml。</p>
+        <button id="convertAnotherButton" class="secondary-button" type="button">转换另一个包</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Nexo 1.26</span><i aria-hidden="true"></i><span>CraftEngine 26.8</span><i aria-hidden="true"></i><span>Minecraft 1.21.11 semantics</span>
+  </footer>
+</body>
+</html>
