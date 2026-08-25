@@ -334,6 +334,31 @@ test("root item coercions follow Nexo and invalid materials fall back to PAPER",
   assert.ok(diagnostics.items.some((entry) => entry.code === "ROOT_MAX_DURABILITY_IGNORED"));
 });
 
+test("vanilla-dyeable Nexo items opt into CraftEngine's custom dye recipe", () => {
+  const diagnostics = new DiagnosticBag();
+  const leather: ResolvedItem = {
+    id: "dyeable_chair", source: "fixture.yml", template: false, templateIds: [],
+    config: {
+      material: "LEATHER_HORSE_ARMOR",
+      color: "255, 255, 255",
+      Pack: { model: "demo:item/dyeable_chair" },
+    },
+  };
+  const converted = convertItem(leather, { namespace: "demo", clientMode: "modern" }, undefined, diagnostics)!;
+  assert.deepEqual(converted.config.settings, { dyeable: true });
+  assert.equal((converted.config.data as JsonObject).dyed_color, 0xffffff);
+  assert.equal(converted.semantics.dyeable, true);
+
+  const paper: ResolvedItem = {
+    ...leather,
+    id: "colored_paper",
+    config: { ...leather.config, material: "PAPER" },
+  };
+  const nonDyeable = convertItem(paper, { namespace: "demo", clientMode: "modern" }, undefined, diagnostics)!;
+  assert.equal(nonDyeable.config.settings, undefined, "a color component alone must not invent a dye recipe");
+  assert.equal(nonDyeable.semantics.dyeable, false);
+});
+
 test("Components use Nexo's exact whitelist, clamps, and vanilla codec shapes", () => {
   const diagnostics = new DiagnosticBag();
   const item: ResolvedItem = {
@@ -611,16 +636,16 @@ test("Nexo furniture lights become CE glowing variants with persistent right-cli
   const groundHitboxes = (variants.ground as JsonObject).hitboxes as JsonObject[];
   assert.equal(groundHitboxes.some((entry) => entry._nexo_barrier !== undefined), false);
 
-  assert.equal(furniture.behaviors, undefined, "furniture behavior key must stay singular");
-  const behaviors = furniture.behavior as JsonObject[];
-  assert.equal(behaviors[0]!.type, "glowing_furniture");
-  const lights = ((behaviors[0]!.variants as JsonObject).ground as JsonObject[]);
+  assert.equal(furniture.behavior, undefined, "official default furniture uses the plural behaviors key");
+  const behavior = furniture.behaviors as JsonObject;
+  assert.equal(behavior.type, "glowing_furniture");
+  const lights = ((behavior.variants as JsonObject).ground as JsonObject[]);
   assert.deepEqual(lights, [
     { position: "0,1,0", level: 14 },
     { position: "-1,0,1", level: 12 },
     { position: "-2,0,1", level: 12 },
   ]);
-  assert.equal((behaviors[0]!.variants as JsonObject).ground_unlit, undefined);
+  assert.equal((behavior.variants as JsonObject).ground_unlit, undefined);
   const events = furniture.events as JsonObject[];
   const functions = events.find((event) => event.on === "right_click")!.functions as JsonObject[];
   const cases = functions[0]!.cases as JsonObject[];
@@ -631,6 +656,10 @@ test("Nexo furniture lights become CE glowing variants with persistent right-cli
   assert.equal((converted.semantics.furniture as JsonObject).lights, 3);
   assert.equal((converted.semantics.furniture as JsonObject).toggleable_light, true);
   assert.ok(diagnostics.items.some((entry) => entry.code === "NEXO_LIGHT_BARRIER_OVERLAP_IGNORED"));
+  const requirement = diagnostics.items.find((entry) => entry.code === "CRAFTENGINE_FURNITURE_LIGHT_SYSTEM_REQUIRED")!;
+  assert.equal((requirement.context as JsonObject).setting, "furniture.light-system.enable");
+  assert.equal((requirement.context as JsonObject).required_value, true);
+  assert.equal(requirement.lossy, false);
 });
 
 test("furniture light positions follow only explicit placement anchors", () => {
@@ -641,7 +670,9 @@ test("furniture light positions follow only explicit placement anchors", () => {
     hitbox: { barriers: ["0,0,0"] },
     lights: { lights: ["0,1,0 14"] },
   } } }, "demo:fixed_lamp", "demo:item/fixed_lamp", diagnostics, "fixture.yml", "fixed_lamp").furniture!;
-  const fixedLights = (((fixed.behavior as JsonObject[])[0]!.variants) as JsonObject);
+  const fixedBehavior = fixed.behaviors as JsonObject;
+  assert.equal(fixedBehavior.type, "glowing_furniture");
+  const fixedLights = fixedBehavior.variants as JsonObject;
   assert.deepEqual(fixedLights.ground, [{ position: "0,1,0", level: 14 }]);
   assert.deepEqual(fixedLights.ceiling, [{ position: "0,0.99,0", level: 14 }]);
   assert.deepEqual(fixedLights.wall, [{ position: "0,1,0.01", level: 14 }]);
@@ -652,8 +683,9 @@ test("furniture light positions follow only explicit placement anchors", () => {
     hitbox: { interactions: ["0,0,0 1,1"] },
     lights: { lights: ["0,1,0 10"] },
   } } }, "demo:head_lamp", "demo:item/head_lamp", diagnostics, "fixture.yml", "head_lamp").furniture!;
-  const nonFixedLights = (((nonFixed.behavior as JsonObject[])[0]!.variants) as JsonObject);
-  assert.deepEqual(nonFixedLights.ground, [{ position: "0,1.5,0", level: 10 }]);
+  const nonFixedBehavior = nonFixed.behaviors as JsonObject;
+  assert.deepEqual(nonFixedBehavior.lights, [{ position: "0,1.5,0", level: 10 }]);
+  assert.equal(nonFixedBehavior.variants, undefined);
 });
 
 test("rotatable false is exact and scalar true uses native CE rotation", () => {
@@ -850,9 +882,10 @@ test("Autumn ceiling lantern keeps Nexo's separate visual, Barrier, and light an
     { position: "0,-0.01,0", pitch: -90, yaw: undefined, rotation: "0,1,0,0", displayTransform: "fixed" },
   );
   assert.deepEqual(barrier, { type: "shulker", position: "0,-1,0", interaction_entity: false });
-  const glowing = (converted.furniture!.behavior as JsonObject[]).find((behavior) => behavior.type === "glowing_furniture")!;
+  const glowing = converted.furniture!.behaviors as JsonObject;
+  assert.equal(glowing.type, "glowing_furniture");
   assert.deepEqual((glowing.variants as JsonObject).ceiling, [{ position: "0,-1.01,0", level: 14 }]);
-  assert.equal(diagnostics.items.length, 0);
+  assert.deepEqual(diagnostics.items.map((entry) => entry.code), ["CRAFTENGINE_FURNITURE_LIGHT_SYSTEM_REQUIRED"]);
 });
 
 test("Barrier furniture keeps one concise base placement without generated voxel profiles", () => {
@@ -1112,9 +1145,11 @@ test("end-to-end globals drive rotation with concise furniture variants", async 
     const furniture = (yaml.furniture as JsonObject)["demo:turning"] as JsonObject;
     assert.equal(furniture.template, undefined);
     assert.equal((furniture.settings as JsonObject).item, "demo:turning");
-    assert.equal(furniture.behaviors, undefined);
-    const behavior = (furniture.behavior as JsonObject[])[0]!;
+    assert.equal(furniture.behavior, undefined);
+    const behavior = furniture.behaviors as JsonObject;
     assert.equal(behavior.type, "glowing_furniture");
+    assert.deepEqual(behavior.lights, [{ position: "0,1,0.01", level: 14 }]);
+    assert.equal(behavior.variants, undefined);
     assert.deepEqual(Object.keys(furniture.variants as JsonObject), ["wall"]);
     assert.doesNotMatch(furnitureText, /_nexo_(?:ground|ceiling)_barrier_grid|_nexo_wall_supported|<arg:position\.y>/u);
     const events = furniture.events as JsonObject[];

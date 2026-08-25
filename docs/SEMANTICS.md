@@ -127,6 +127,7 @@ Nexo 将 Components.unset_components 保存到最后执行。因此 CE 输出也
 - 数字 left_rotation 是 Y 轴角度；数字 right_rotation 是 X 轴角度。
 - Nexo 矩阵为 T*L*S*R；CE 只有一个 pre-scale rotation。右旋转非单位且 scale 非均匀时不能精确折叠，必须诊断。
 - 对同时带 Nexo FIXED yaw -180 与 floor/roof pitch ±90 的元素，若水平 translation 为 0 且 left/right rotation 均为单位旋转，转换器使用恒等式 Yπ·X(p)=X(-p)·Yπ：删除 element yaw、反转 pitch，并写入 CE metadata rotation `0,1,0,0`。该分解与 Minecraft 完整运行时矩阵等价，也避免 CE 编辑器把非交换 yaw/pitch 组合上下反转；translation.y 和非均匀 scale 均可安全保留。存在水平 translation 或自定义旋转时不做此折叠。
+- Nexo 底层材质属于原版 `minecraft:dyeable` 标签时，物品会按 CE Wiki 写出 `settings.dyeable: true`。CraftEngine 据此注册自身的动态染色配方；转换器不会用 `shapeless_transform` 冒充多染料混色算法。`data.dyed_color` 只表示源物品已有的初始颜色，不等于染色配方开关。
 - Nexo 放置家具时会把实际来源 ItemStack 的染色值应用到显示物品。每个 CE `item_display` 因此写入 `tint_source: [minecraft:dyed_color]`，从家具保存的来源物品复制运行时 `minecraft:dyed_color`；染色后再放置不再回退到配置中的默认颜色，破坏后掉落的来源物品也继续保留该组件。
 
 ### 7.2 放置面
@@ -166,14 +167,15 @@ Nexo 在配置坐标生成高 0.1 的座位 Interaction；CraftEngine `BukkitSea
 
 - `lights.lights` 的单点、`origin`、闭区间笛卡尔积和 0..15 等级按 Nexo 1.26 解析。
 - 与 Nexo barrier 坐标重叠的灯光会像 Nexo 一样被忽略。
-- 输出使用 CraftEngine `glowing_furniture` behavior；相对坐标继续应用 `(-x,y,-z)` 基变换。CraftEngine 26.8 的全局 `furniture.light-system.enable` 必须保持 `true`（官方默认值）；关闭后 CE 本身会拒绝加载任何 glowing furniture。
-- 灯光应用每个基础 ground/ceiling/wall anchor 的完整局部偏移；不会为不存在的 grid/support profile 重复生成坐标。
+- 输出跟随 CE 官方默认包 `default:candelabrum`，使用单对象 `behaviors: { type: glowing_furniture, ... }`。CE 解析器同时兼容 `behavior(s)`，但转换器固定采用官方默认包键名；单一/统一灯位使用 `lights`，各变体位置不同或需要亮灭状态时才使用 `variants`，键名与家具 variant 完全一致。
+- CraftEngine 全局 `furniture.light-system.enable` 必须为 `true`；关闭后 CE 会拒绝加载 glowing furniture。转换器无法修改服务器级 `plugins/CraftEngine/config.yml`，因此会写入非损失性 `CRAFTENGINE_FURNITURE_LIGHT_SYSTEM_REQUIRED` 部署警告及准确 Wiki 链接。
+- Nexo 配置坐标先应用 `(-x,y,-z)` 基变换。Nexo 以实际生成的基础 ItemDisplay 为灯光原点，而 CE Wiki 规定灯位相对 furniture root；转换器再按每个 ground/ceiling/wall 放置面做“源 ItemDisplay 原点 → CE furniture root”的显式平移。该平移不是从模型视觉边界猜测坐标，也不会为不存在的 grid/support profile 重复生成灯位。
 - `toggleable:true` 会为每个放置面生成持久化的 unlit variant，并使用 `right_click` + `set_furniture_variant` 在亮/灭状态间切换；初始状态与 Nexo 一样为亮。unlit variant 不会进入 glowing behavior 的 variants map。
 - `toggled_model`/`toggled_item_model` 还需要单独的 CE 显示物品，因此存在时继续给出明确诊断。
 
 ### 7.5 可读的具体家具输出
 
-转换器直接把完整 furniture 语义对象写入 `configuration/furniture.yml`，不再把它重写为结构哈希模板图。每个家具 ID 下都能直接看到 `settings`、`variants`、`hitboxes`、`events`、`behavior` 与 `loot`。
+转换器直接把完整 furniture 语义对象写入 `configuration/furniture.yml`，不再把它重写为结构哈希模板图。每个家具 ID 下都能直接看到 `settings`、`variants`、`hitboxes`、`events`、`behaviors` 与 `loot`。
 
 - 不生成 `configuration/furniture-templates.yml`。
 - 不生成 `_nexo2ce/furniture/variant-shift/*`、`__nexo2ce_*` 或 `${...}` 参数。

@@ -45,6 +45,19 @@ export interface ConvertedItem {
   semantics: JsonObject;
 }
 
+// Minecraft's armor-dye recipe accepts the vanilla `minecraft:dyeable` tag.
+// CraftEngine custom items should opt in explicitly so CE registers its custom
+// dye recipe instead of relying on the backing vanilla material as an implicit
+// fallback. This is the canonical `settings.dyeable` form documented by CE.
+const VANILLA_DYEABLE_MATERIALS = new Set([
+  "leather_helmet",
+  "leather_chestplate",
+  "leather_leggings",
+  "leather_boots",
+  "leather_horse_armor",
+  "wolf_armor",
+]);
+
 export function matchBukkitMaterial(value: JsonValue | undefined): string | undefined {
   if (typeof value !== "string") return undefined;
   const candidate = (value.startsWith("minecraft:") ? value.slice("minecraft:".length) : value)
@@ -601,6 +614,8 @@ export function convertItem(
   const effectiveColor = typeof item.config.color === "string" && nexoColor(item.config.color) !== undefined ? item.config.color : undefined;
   const convertedModels = convertModels(packInfo, itemModelSection, material, effectiveColor, options.clientMode, modelContext);
   const ce: JsonObject = { material };
+  const dyeable = VANILLA_DYEABLE_MATERIALS.has(material);
+  if (dyeable) ce.settings = { dyeable: true };
   if (Object.keys(data).length > 0) ce.data = data;
   if (convertedModels.model !== undefined) ce.model = convertedModels.model;
   if (convertedModels.legacyModel !== undefined) ce.legacy_model = convertedModels.legacyModel;
@@ -631,6 +646,7 @@ export function convertItem(
     baseModel: convertedModels.baseModel,
     semantics: {
       material_scope: material,
+      dyeable,
       item_model: modelPointer ?? null,
       custom_model_data: assignedCustomModelData ?? null,
       ...convertedModels.modelSemantics,

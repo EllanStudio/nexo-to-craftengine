@@ -29,7 +29,7 @@
 - 递归、多模板 Nexo 继承及占位符
 - 自动推断作者命名空间，不要求 Web 页面手工输入
 - modern ItemModel、legacy CMD 与 hybrid 输出
-- bow/crossbow、damaged models、染色继承、玩家头特殊模型
+- bow/crossbow、damaged models、CE `settings.dyeable` 动态染色配方、染色继承、玩家头特殊模型
 - 名称、Lore、属性、PDC、PotionEffects；16 类 Nexo builder Components 按官方 Minecraft 1.21.11 codec 安全展开
 - CraftEngine 物品浏览器分类：Nexo FILE/DIRECTORY 结构、子分类、inventory.yml 名称/图标/槽位及 excludeFromInventory
 - furniture 基础 ground/ceiling/wall 放置面与原生 rotate_furniture；不生成重复的 1/16 grid/support profiles
@@ -136,7 +136,7 @@ resources/
 
 ### 可读家具配置
 
-转换器参考 `1robie/CraftEngineConverter` 的直接配置对象思路，把每个家具的 `settings`、`variants`、`hitboxes`、`events`、`behavior` 和 `loot` 完整写入 `furniture.yml`。默认输出不再创建 `furniture-templates.yml`，也不会出现哈希命名的 `_nexo2ce/furniture/variant-shift/*`、`__nexo2ce_*` 参数或 `${...}` 模板表达式。
+转换器参考 `1robie/CraftEngineConverter` 的直接配置对象思路，把每个家具的 `settings`、`variants`、`hitboxes`、`events`、`behaviors` 和 `loot` 完整写入 `furniture.yml`。默认输出不再创建 `furniture-templates.yml`，也不会出现哈希命名的 `_nexo2ce/furniture/variant-shift/*`、`__nexo2ce_*` 参数或 `${...}` 模板表达式。
 
 与参考项目一样，每个家具只保留源配置启用的 `ground`、`ceiling`、`wall` 基础放置面。转换器不会再为 Barrier 自动制造 15 个高度 profile 或 `_nexo_wall_supported`，因此灯光开关也只为这些基础放置面生成必要分支；座位、hitbox、灯光和旋转仍保留。CraftEngine 26.8 已有的 hitbox 默认值（例如 `can_be_hit_by_projectile: true`、`scale: 1`、`peek: 0`）不再重复写出。
 

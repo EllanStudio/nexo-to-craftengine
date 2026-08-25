@@ -20,12 +20,13 @@
 | item browser categories | 自动 | Nexo FILE/DIRECTORY 树、inventory.yml 名称/图标/slot、hidden 子分类、excludeFromInventory |
 | builder Components | 自动/条件 | 16 类按 Nexo builder 语义和官方 1.21.11 codec 展开；仅实时 registry、继承模板或外部 ItemStack 子情况人工 |
 | furniture variants/rotation | 自动 | 初始 four/eight 与原生 rotate_furniture 45°/22.5°；保留 sneak/游戏模式条件 |
+| dyeable items / dye recipe | 自动 | 原版可染底层材质显式写 `settings.dyeable: true`，由 CE 注册动态混色配方；`data.dyed_color` 仅保留初始色 |
 | furniture dyed color | 自动 | 每个 item_display 通过 CE 26.8 tint_source 继承实际放置物品的 minecraft:dyed_color，不回退到未染色/默认色 |
 | furniture dynamic placement | 自动简化 | 仅输出 ground/ceiling/wall 基础面；CE 使用实际 ray surface，不生成 1/16 grid 或 Material.isSolid wall-support profiles |
 | Interaction/Shulker/Ghast hitbox | 自动子集 | 可加载字段自动；可见调试/旋转差异会诊断 |
 | barrier hitbox | 精确功能 | CE Shulker 精确保留单位硬碰撞、建造/物品/弹射物阻挡；虚拟 Barrier 包仅作为表示层边界记录；单家具 Barrier range 最多安全展开 4096 个位置，超限为 error |
 | seats | 自动 | 抵消 CE 固定 +0.6Y；挂载至现有可点击 hitbox，空 hitbox 才使用微型代理 |
-| furniture lights | 自动 | 静态灯光与 toggleable 状态；仅为实际基础放置面写局部 light position 与亮/灭分支；CE 全局 furniture.light-system.enable 必须保持 true（26.8 默认 true）；替代 toggled model 需人工物品 |
+| furniture lights | 自动 + 部署前置 | 官方 `default:candelabrum` 规范的单 `behaviors` 对象及 `lights`/`variants`；仅为实际放置面写相对 furniture root 的灯位；必须启用全局 `furniture.light-system.enable: true`，转换报告会明确告警；替代 toggled model 需人工物品 |
 | furniture loot | 自动 self / 其他人工 | 在具体家具定义内直接写完整 inline loot；复杂条件不猜测 |
 | note/string/chorus blocks | 自动安全子集 | state 由 CE 分配；复杂方向/农田/光照等人工 |
 | recipes | 自动子集 | 外部 ExactChoice 和动态 tag 人工 |

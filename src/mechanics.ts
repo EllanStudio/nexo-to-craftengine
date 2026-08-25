@@ -643,6 +643,9 @@ function shiftedHitboxes(
   });
 }
 
+// CE documents every light position relative to the furniture root. Nexo uses
+// its spawned base ItemDisplay as the light origin, so translate that source
+// origin into each CE placement root before emitting the documented positions.
 function shiftedFurnitureLights(
   lights: JsonObject[],
   offset: readonly [number, number, number],
@@ -772,7 +775,9 @@ function convertFurniture(
     const seatPlayerOffset: [number, number, number] = [offset[0], offset[1] + translation[1] - 0.6, offset[2]];
     if (variant === "ground") barrierOffset = offset;
     variants[variant] = { elements: [variantElement], hitboxes: shiftedHitboxes(hitboxes, offset, interactionOffset, barrierOffset, seatEntityOffset, seatPlayerOffset) };
-    // CE glowing positions are furniture-root-relative to this placement anchor.
+    // Nexo's light origin is this placement's base ItemDisplay location, while
+    // CE's documented light origin is the furniture root. Record the explicit
+    // source-origin -> CE-root translation independently from element parsing.
     variantOffsets.set(variant, offset);
   }
   if (seats.length > 0) {
@@ -798,6 +803,18 @@ function convertFurniture(
   const rightClickFunctions: JsonObject[] = [];
   let toggleableLight = false;
   if (lightMapping) {
+    context.diagnostics.warning(
+      "CRAFTENGINE_FURNITURE_LIGHT_SYSTEM_REQUIRED",
+      "CraftEngine glowing_furniture requires furniture.light-system.enable: true in the server's config.yml",
+      {
+        context: {
+          config_file: "plugins/CraftEngine/config.yml",
+          setting: "furniture.light-system.enable",
+          required_value: true,
+          wiki: "https://xiao-momi.github.io/craft-engine-wiki/configuration/furniture/behaviors/glowing_furniture",
+        },
+      },
+    );
     const litVariants: JsonObject = {};
     const originalNames = Object.keys(variants);
     for (const name of originalNames) {
@@ -806,7 +823,18 @@ function convertFurniture(
         variantOffsets.get(name) ?? [0, 0, 0],
       );
     }
-    definition.behavior = [{ type: "glowing_furniture", variants: litVariants }];
+    const lightLists = Object.values(litVariants) as JsonObject[][];
+    const uniformLights = lightLists.length > 0
+      && lightLists.every((lights) => JSON.stringify(lights) === JSON.stringify(lightLists[0]));
+    const glowingBehavior: JsonObject = { type: "glowing_furniture" };
+    // Follow the Wiki's canonical forms: `lights` for one/uniform lit state and
+    // `variants` only when positions differ or unlit variants must stay dark.
+    if (!lightMapping.toggleable && uniformLights) glowingBehavior.lights = deepClone(lightLists[0]!);
+    else glowingBehavior.variants = litVariants;
+    // Match CraftEngine's shipped default:candelabrum configuration. The parser
+    // accepts behavior(s), but the official default pack uses this plural key
+    // with a mapping for one behavior.
+    definition.behaviors = glowingBehavior;
     if (lightMapping.toggleable) {
       toggleableLight = true;
       const cases: JsonObject[] = [];
