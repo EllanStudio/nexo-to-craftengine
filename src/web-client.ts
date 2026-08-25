@@ -98,6 +98,7 @@ const readyTitle = byId<HTMLElement>("readyTitle");
 const readyDetail = byId<HTMLElement>("readyDetail");
 const clearButton = byId<HTMLButtonElement>("clearButton");
 const convertButton = byId<HTMLButtonElement>("convertButton");
+const actionBar = byId<HTMLElement>("actionBar");
 const progressPanel = byId<HTMLElement>("progressPanel");
 const resultPanel = byId<HTMLElement>("resultPanel");
 const cancelButton = byId<HTMLButtonElement>("cancelButton");
@@ -117,6 +118,9 @@ const diagnosticSummary = byId<HTMLElement>("diagnosticSummary");
 const diagnosticDetails = byId<HTMLDetailsElement>("diagnosticDetails");
 const diagnosticCount = byId<HTMLElement>("diagnosticCount");
 const diagnosticList = byId<HTMLElement>("diagnosticList");
+const copyDiagnosticsButton = byId<HTMLButtonElement>("copyDiagnosticsButton");
+const diagnosticSearch = byId<HTMLInputElement>("diagnosticSearch");
+const toastContainer = byId<HTMLDivElement>("toastContainer");
 
 const phaseElements: Record<PhaseName, { row: HTMLElement; text: HTMLElement; progress: HTMLProgressElement }> = {
   package: { row: byId("packageRow"), text: byId("packageText"), progress: byId("packageProgress") },
@@ -128,15 +132,32 @@ const phaseElements: Record<PhaseName, { row: HTMLElement; text: HTMLElement; pr
 let selectedSource: SelectedSource | undefined;
 let activeRequest: XMLHttpRequest | undefined;
 let resultBlobUrl: string | undefined;
-let resultFilename = "craftengine-pack.zip";
-let operationGeneration = 0;
-let elapsedTimer: number | undefined;
+let resultFilename = "craftengine-output.zip";
 let operationStarted = 0;
+let elapsedTimer: number | undefined;
+let operationGeneration = 0;
 let maxUploadBytes = 256 * 1024 * 1024;
 let maxExpandedBytes = 512 * 1024 * 1024;
 let maxFileBytes = 128 * 1024 * 1024;
 let maxSourceFiles = 25_000;
 let busy = false;
+let currentDiagnosticGroups: DiagnosticGroup[] = [];
+let currentDiagnosticFilter = "all";
+let currentDiagnosticSearchQuery = "";
+let latestConversionReport: ConversionReport | undefined;
+
+function showToast(message: string, isSuccess = true): void {
+  const toast = document.createElement("div");
+  toast.className = "toast" + (isSuccess ? " toast-success" : "");
+  toast.textContent = message;
+  toastContainer.append(toast);
+  window.setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(8px) scale(0.96)";
+    toast.style.transition = "all 0.25s ease";
+    window.setTimeout(() => toast.remove(), 250);
+  }, 3200);
+}
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -170,17 +191,19 @@ function updateReadyState(): void {
   const sourceReady = selectedSource?.valid === true;
   convertButton.disabled = busy || !sourceReady;
   clearButton.disabled = busy || !selectedSource;
+  actionBar.classList.toggle("is-ready", sourceReady && !busy);
+
   if (!selectedSource) {
     readyTitle.textContent = "等待选择 Nexo 包";
-    readyDetail.textContent = "文件只会发送到本机转换服务";
+    readyDetail.textContent = "所有处理均在当前浏览器与本机后台执行，无远程上传";
     updateSteps("select");
   } else if (!selectedSource.valid) {
     readyTitle.textContent = "来源需要处理";
-    readyDetail.textContent = selectedSource.error ?? "未识别到 Nexo 根目录";
+    readyDetail.textContent = selectedSource.error ?? "未识别到有效的 Nexo 根目录";
     updateSteps("select");
   } else {
-    readyTitle.textContent = "可以开始转换";
-    readyDetail.textContent = formatBytes(selectedSource.bytes) + " · 将从作者原包自动读取命名空间 · " + (selectedSource.kind === "folder" ? "文件夹会先在浏览器中打包" : "ZIP 将直接上传到本机");
+    readyTitle.textContent = "准备就绪，可以开始转换";
+    readyDetail.textContent = formatBytes(selectedSource.bytes) + " · 自动解析作者命名空间 · " + (selectedSource.kind === "folder" ? "文件夹将在浏览器打包后传输" : "ZIP 压缩包将直接传输解析");
     updateSteps("configure");
   }
 }
@@ -256,6 +279,7 @@ function setFolderSource(entries: InputEntry[], name: string): void {
       error: detection.error ?? limitError,
     };
     renderSource(detection.itemFiles, detection.assets);
+    showToast("已成功载入文件夹：" + name);
   } catch (error) {
     selectedSource = undefined;
     showInputError(error instanceof Error ? error.message : String(error));
@@ -272,9 +296,12 @@ function setZipSource(file: File): void {
     file,
     bytes: file.size,
     valid: zipName && sizeValid,
-    error: !zipName ? "请选择 .zip 文件" : !sizeValid ? "ZIP 超过上传限制（" + formatBytes(maxUploadBytes) + "）" : undefined,
+    error: !zipName ? "请选择 .zip 格式的压缩文件" : !sizeValid ? "ZIP 超过上传限制（" + formatBytes(maxUploadBytes) + "）" : undefined,
   };
   renderSource(0, 0);
+  if (selectedSource.valid) {
+    showToast("已载入 ZIP 资源包：" + file.name);
+  }
 }
 
 function renderSource(itemFiles: number, assets: number): void {
@@ -285,14 +312,16 @@ function renderSource(itemFiles: number, assets: number): void {
   changeInputButton.classList.remove("is-hidden");
   sourceIcon.textContent = selectedSource.kind === "folder" ? "DIR" : "ZIP";
   sourceName.textContent = selectedSource.name;
-  sourceFiles.textContent = selectedSource.kind === "folder" ? String(selectedSource.entries.length) : "1";
+  sourceFiles.textContent = selectedSource.kind === "folder" ? String(selectedSource.entries.length) : "1 个压缩包";
   sourceSize.textContent = formatBytes(selectedSource.bytes);
   if (selectedSource.kind === "folder") {
-    sourceDetail.textContent = "文件夹 · 浏览器打包后在本机转换";
-    detectionLine.textContent = selectedSource.detectedRoot ? "已识别 Nexo 根目录：" + selectedSource.detectedRoot + " · " + itemFiles + " 个物品配置 · " + assets + " 个资源文件" : selectedSource.error ?? "等待识别";
+    sourceDetail.textContent = "文件夹来源 · 将在当前浏览器直接打包传输至转换引擎";
+    detectionLine.textContent = selectedSource.detectedRoot
+      ? "已定位 Nexo 根目录：[" + selectedSource.detectedRoot + "] · 发现 " + itemFiles + " 个物品配置 · " + assets + " 个模型材质文件"
+      : selectedSource.error ?? "等待解析目录结构";
   } else {
-    sourceDetail.textContent = "ZIP · 由本机服务安全解压";
-    detectionLine.textContent = "上传后自动识别任意层级中的 Nexo 根目录";
+    sourceDetail.textContent = "ZIP 压缩包 · 由本地服务执行安全解压与智能定位";
+    detectionLine.textContent = "开始转换后将自动扫描任意层级寻找 Nexo 根目录与作者命名空间";
   }
   updateReadyState();
 }
@@ -324,6 +353,8 @@ function clearResultPanel(): void {
   auditSummary.replaceChildren();
   diagnosticSummary.replaceChildren();
   diagnosticList.replaceChildren();
+  currentDiagnosticGroups = [];
+  latestConversionReport = undefined;
 }
 
 function legacyFile(entry: LegacyFileEntry): Promise<File> {
@@ -365,7 +396,7 @@ async function handleDrop(dataTransfer: DataTransfer): Promise<void> {
   if (entries.length === 0) {
     for (const file of ordinaryFiles) entries.push({ relativePath: file.name, file });
   }
-  if (entries.length === 0) throw new Error("没有从拖放内容中读取到文件，请使用“选择文件夹”按钮");
+  if (entries.length === 0) throw new Error("未能从拖入内容中读取到文件，请使用“选择文件夹”或“选择 ZIP”");
   const firstRoot = entries[0]!.relativePath.split("/")[0] ?? "Nexo";
   setFolderSource(entries, firstRoot);
 }
@@ -410,7 +441,9 @@ function startElapsedTimer(): void {
   stopElapsedTimer();
   operationStarted = performance.now();
   elapsedTime.textContent = "00:00";
-  elapsedTimer = window.setInterval(() => { elapsedTime.textContent = formatElapsed(performance.now() - operationStarted); }, 500);
+  elapsedTimer = window.setInterval(() => {
+    elapsedTime.textContent = formatElapsed(performance.now() - operationStarted);
+  }, 250);
 }
 
 function stopElapsedTimer(): void {
@@ -426,16 +459,16 @@ async function packageFolder(source: FolderSource, generation: number): Promise<
   const files: Record<string, Uint8Array> = {};
   let completedBytes = 0;
   setPhase("package", "running", "读取 0 / " + source.entries.length + " 个文件", 0);
-  liveStatus.textContent = "正在浏览器中打包文件夹…";
+  liveStatus.textContent = "正在读取并打包文件夹…";
   for (let index = 0; index < source.entries.length; index++) {
     if (generation !== operationGeneration) throw new DOMException("Conversion cancelled", "AbortError");
     const entry = source.entries[index]!;
     files[entry.relativePath] = new Uint8Array(await entry.file.arrayBuffer());
     completedBytes += entry.file.size;
-    const percent = source.bytes > 0 ? completedBytes / source.bytes * 92 : (index + 1) / source.entries.length * 92;
-    setPhase("package", "running", "读取 " + (index + 1) + " / " + source.entries.length + " · " + formatBytes(completedBytes), percent);
+    const percent = source.bytes > 0 ? (completedBytes / source.bytes) * 92 : ((index + 1) / source.entries.length) * 92;
+    setPhase("package", "running", "打包 " + (index + 1) + " / " + source.entries.length + " · " + formatBytes(completedBytes), percent);
   }
-  setPhase("package", "running", "正在生成 ZIP…", undefined);
+  setPhase("package", "running", "正在生成压缩包…", undefined);
   await nextFrame();
   const zipped = window.fflate.zipSync(files, { level: 0 });
   if (zipped.byteLength > maxUploadBytes) throw new Error("打包后的 ZIP 超过上传限制（" + formatBytes(maxUploadBytes) + "）");
@@ -448,7 +481,7 @@ async function packageFolder(source: FolderSource, generation: number): Promise<
 function apiUrl(): string {
   const page = new URL(window.location.href);
   const token = page.searchParams.get("token");
-  if (!token) throw new Error("本地会话令牌缺失，请刷新页面");
+  if (!token) throw new Error("本地会话令牌缺失，请刷新页面重新连接");
   const query = new URLSearchParams({
     token,
     clientMode: clientModeSelect.value,
@@ -468,34 +501,34 @@ function uploadZip(blob: Blob, generation: number): Promise<Blob> {
     xhr.setRequestHeader("Content-Type", "application/zip");
     xhr.upload.addEventListener("progress", (event) => {
       if (generation !== operationGeneration) return;
-      const percent = event.lengthComputable && event.total > 0 ? event.loaded / event.total * 100 : undefined;
+      const percent = event.lengthComputable && event.total > 0 ? (event.loaded / event.total) * 100 : undefined;
       setPhase("upload", "running", formatBytes(event.loaded) + (event.total ? " / " + formatBytes(event.total) : ""), percent);
-      liveStatus.textContent = "正在上传到 127.0.0.1…";
+      liveStatus.textContent = "正在传输数据至本地转换服务…";
     });
     xhr.upload.addEventListener("load", () => {
       if (generation !== operationGeneration) return;
       setPhase("upload", "done", "已发送 " + formatBytes(blob.size), 100);
-      setPhase("convert", "running", "服务器正在转换和审计…", undefined);
-      liveStatus.textContent = "正在按 Nexo、CraftEngine 和 Minecraft 语义转换…";
+      setPhase("convert", "running", "语义解析与资源图审计中…", undefined);
+      liveStatus.textContent = "正在按 Nexo、CraftEngine 26.8 与 Minecraft 1.21.11 官方 Codec 转换…";
     });
     let receiving = false;
     xhr.addEventListener("progress", (event) => {
       if (generation !== operationGeneration) return;
       if (!receiving) {
         receiving = true;
-        setPhase("convert", "done", "转换已完成", 100);
+        setPhase("convert", "done", "转换与审计已完成", 100);
       }
-      const percent = event.lengthComputable && event.total > 0 ? event.loaded / event.total * 100 : undefined;
-      setPhase("download", "running", "已接收 " + formatBytes(event.loaded), percent);
-      liveStatus.textContent = "正在接收 CraftEngine ZIP…";
+      const percent = event.lengthComputable && event.total > 0 ? (event.loaded / event.total) * 100 : undefined;
+      setPhase("download", "running", "已组装 " + formatBytes(event.loaded), percent);
+      liveStatus.textContent = "正在接收生成的 CraftEngine ZIP…";
     });
     xhr.addEventListener("load", () => {
       if (generation !== operationGeneration) return;
       activeRequest = undefined;
       const response = xhr.response as Blob;
       if (xhr.status >= 200 && xhr.status < 300 && (response.type === "application/zip" || xhr.getResponseHeader("Content-Type")?.startsWith("application/zip"))) {
-        setPhase("convert", "done", "转换已完成", 100);
-        setPhase("download", "done", "已接收 " + formatBytes(response.size), 100);
+        setPhase("convert", "done", "转换与审计已完成", 100);
+        setPhase("download", "done", "已完成 · " + formatBytes(response.size), 100);
         resolveUpload(response);
         return;
       }
@@ -508,9 +541,9 @@ function uploadZip(blob: Blob, generation: number): Promise<Blob> {
         }
       });
     });
-    xhr.addEventListener("error", () => rejectUpload(new Error("无法连接本机转换服务，请确认终端中的 Web 服务仍在运行")));
+    xhr.addEventListener("error", () => rejectUpload(new Error("无法连接本机转换服务，请确认终端中的 Web 服务仍处于运行状态")));
     xhr.addEventListener("abort", () => rejectUpload(new DOMException("Conversion cancelled", "AbortError")));
-    setPhase("upload", "running", "准备上传…", 0);
+    setPhase("upload", "running", "准备传输…", 0);
     xhr.send(blob);
   });
 }
@@ -586,10 +619,14 @@ interface DiagnosticGroup {
 const diagnosticGuidance: Record<string, { message: string; note?: string }> = {
   FURNITURE_WALL_VERTICAL_OFFSET_DYNAMIC: {
     message: "该未受限 FIXED 墙面配置仍有依赖下方支撑的垂直位移。",
-    note: "limited wall 已由 Material.isSolid 原生 profiles 自动处理；未受限模式同时受 Nexo 玩家 yaw 与多放置面默认值影响，转换器不会用错误的静态偏移掩盖它。",
+    note: "转换器采用简洁的单一 wall 基础变体，不再生成冗长 support profiles；依赖下方支撑的动态位移可根据需要手动微调。",
   },
   FURNITURE_TOGGLED_LIGHT_MODEL_UNSUPPORTED: {
     message: "灯光开关已转换，但 Nexo 为关闭状态指定的替代显示模型需要单独建立 CraftEngine 物品。",
+  },
+  COMPONENT_CODEC_MANUAL: {
+    message: "该 Data Component 包含需要运行时注册表展开、外部 ItemStack 或无法静态判定的字段，已安全省略以防加载异常。",
+    note: "16 类常见 Builder Components 已按官方 1.21.11 Codec 安全展开；仅特殊动态结构保留此诊断。",
   },
 };
 
@@ -615,14 +652,43 @@ function severityLabel(severity: string): string {
   return "信息";
 }
 
+function filterDiagnosticGroups(groups: DiagnosticGroup[], filter: string, searchQuery: string): DiagnosticGroup[] {
+  const query = searchQuery.trim().toLowerCase();
+  return groups.filter((group) => {
+    if (filter === "error" && group.severity !== "error") return false;
+    if (filter === "warning" && group.severity !== "warning") return false;
+    if (filter === "lossy" && !group.lossy) return false;
+    if (query) {
+      const matchCode = group.code.toLowerCase().includes(query);
+      const matchMsg = group.message.toLowerCase().includes(query);
+      const matchLocations = group.diagnostics.some((d) => diagnosticLocation(d).toLowerCase().includes(query));
+      if (!matchCode && !matchMsg && !matchLocations) return false;
+    }
+    return true;
+  });
+}
+
 function renderDiagnostics(groups: DiagnosticGroup[]): void {
   diagnosticList.replaceChildren();
-  const visible = groups.slice(0, 100);
+  const filtered = filterDiagnosticGroups(groups, currentDiagnosticFilter, currentDiagnosticSearchQuery);
+  const visible = filtered.slice(0, 100);
+
+  if (filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "diagnostic-item";
+    empty.style.justifyContent = "center";
+    empty.style.color = "var(--muted)";
+    empty.style.fontSize = "12px";
+    empty.textContent = groups.length === 0 ? "未产生任何诊断信息，转换完全清洁。" : "没有匹配当前筛选条件的诊断记录。";
+    diagnosticList.append(empty);
+    return;
+  }
+
   for (const group of visible) {
     const item = document.createElement("div");
     item.className = "diagnostic-item";
     const level = document.createElement("span");
-    level.className = "diag-level " + group.severity;
+    level.className = "diag-level " + (group.lossy ? "lossy" : group.severity);
     level.textContent = severityLabel(group.severity) + (group.lossy ? " · 有损" : "") + (group.diagnostics.length > 1 ? " ×" + group.diagnostics.length : "");
     const body = document.createElement("div");
     body.className = "diag-body";
@@ -647,7 +713,7 @@ function renderDiagnostics(groups: DiagnosticGroup[]): void {
       const occurrences = document.createElement("details");
       occurrences.className = "diag-occurrences";
       const summary = document.createElement("summary");
-      summary.textContent = "受影响 " + locations.length + " 项（展开查看）";
+      summary.textContent = "受影响 " + locations.length + " 处（展开查看详情）";
       const list = document.createElement("ul");
       for (const location of locations.slice(0, 100)) {
         const row = document.createElement("li");
@@ -665,20 +731,56 @@ function renderDiagnostics(groups: DiagnosticGroup[]): void {
     item.append(level, body);
     diagnosticList.append(item);
   }
-  if (groups.length > visible.length) {
+  if (filtered.length > visible.length) {
     const omitted = document.createElement("div");
     omitted.className = "diagnostic-item";
-    omitted.textContent = "还有 " + (groups.length - visible.length) + " 类诊断，请查看 ZIP 内的 conversion-report.json。";
+    omitted.textContent = "还有 " + (filtered.length - visible.length) + " 类诊断，请查看 ZIP 内的 conversion-report.json。";
     diagnosticList.append(omitted);
   }
 }
 
+function generateMarkdownDiagnosticReport(): string {
+  if (!latestConversionReport) return "没有可用的转换诊断报告。";
+  const identity = objectValue(latestConversionReport.identity);
+  const counts = objectValue(latestConversionReport.counts);
+  const targetNamespace = String(identity.targetItemNamespace ?? "未知");
+  const diagnostics = Array.isArray(latestConversionReport.diagnostics) ? latestConversionReport.diagnostics : [];
+  const lines: string[] = [
+    "# Nexo → CraftEngine 转换与审计报告",
+    "",
+    "- **目标命名空间**: `" + targetNamespace + "`",
+    "- **转换状态**: " + (latestConversionReport.success ? "成功 ✓" : "失败 / 需检查 ✗"),
+    "- **转换项目**: " + numberValue(counts.items) + " 物品, " + numberValue(counts.categories) + " 分类, " + numberValue(counts.furniture) + " 家具, " + numberValue(counts.resources) + " 资源",
+    "- **诊断总计**: " + diagnostics.length + " 条",
+    "",
+    "## 诊断汇总",
+    "",
+  ];
+  if (currentDiagnosticGroups.length === 0) {
+    lines.push("未产生任何诊断记录，全部配置与资源引用均完美匹配。");
+  } else {
+    for (const group of currentDiagnosticGroups) {
+      lines.push("### [" + group.severity.toUpperCase() + (group.lossy ? "/LOSSY" : "") + "] " + group.code + " (×" + group.diagnostics.length + ")");
+      lines.push("- **说明**: " + group.message);
+      const locations = Array.from(new Set(group.diagnostics.map(diagnosticLocation).filter(Boolean)));
+      if (locations.length > 0) {
+        lines.push("- **涉及位置** (" + locations.length + "):");
+        for (const loc of locations.slice(0, 10)) lines.push("  - `" + loc + "`");
+        if (locations.length > 10) lines.push("  - ... 及其他 " + (locations.length - 10) + " 处");
+      }
+      lines.push("");
+    }
+  }
+  return lines.join("\n");
+}
+
 function renderResult(blob: Blob, report: ConversionReport): void {
   clearResultPanel();
+  latestConversionReport = report;
   const counts = objectValue(report.counts);
   const diagnosticsCounts = objectValue(counts.diagnostics);
   const diagnostics = Array.isArray(report.diagnostics) ? report.diagnostics : [];
-  const diagnosticGroups = groupDiagnostics(diagnostics);
+  currentDiagnosticGroups = groupDiagnostics(diagnostics);
   const errors = numberValue(diagnosticsCounts.error);
   const warnings = numberValue(diagnosticsCounts.warning);
   const lossy = numberValue(diagnosticsCounts.lossy);
@@ -689,24 +791,26 @@ function renderResult(blob: Blob, report: ConversionReport): void {
   resultPanel.classList.remove("is-hidden");
   resultPanel.classList.toggle("is-partial", !success && blob.size > 0);
   resultEyebrow.textContent = success ? "04 / COMPLETE" : "04 / REVIEW REQUIRED";
-  resultTitle.textContent = success ? "转换完成" : "已生成结果，但需要检查";
+  resultTitle.textContent = success ? "转换完成" : "已生成结果，但需要检查诊断";
   resultMessage.textContent = success
-    ? diagnosticGroups.length === 0
-      ? "已按作者命名空间 " + detectedNamespace + " 生成 CraftEngine ZIP，内部为官方 resources/" + detectedNamespace + " 结构；直接解压到 plugins/CraftEngine/。"
-      : "转换成功；" + diagnostics.length + " 条诊断已合并为 " + diagnosticGroups.length + " 类。ZIP 已按官方 resources/" + detectedNamespace + " 结构打包，直接解压到 plugins/CraftEngine/。"
-    : "报告中存在错误或严格模式不接受的有损项；仍可下载结果进行修正。";
+    ? currentDiagnosticGroups.length === 0
+      ? "已按作者命名空间 " + detectedNamespace + " 生成 CraftEngine 26.8 标准 ZIP（内部为 resources/" + detectedNamespace + " 结构），可直接解压到 plugins/CraftEngine/。"
+      : "转换成功；" + diagnostics.length + " 条诊断已合并为 " + currentDiagnosticGroups.length + " 类。ZIP 内部已按 resources/" + detectedNamespace + " 标准打包。"
+    : "报告中存在错误或严格模式不接受的有损项；仍可下载结果包进行排查。";
   resultMark.textContent = success ? "✓" : "!";
   resultBlobUrl = URL.createObjectURL(blob);
   const sourceStem = selectedSource?.name.replace(/\.zip$/i, "").replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/^_+|_+$/g, "") || "nexo-pack";
   resultFilename = "craftengine-" + sourceStem + ".zip";
   downloadButton.classList.remove("is-hidden");
+  downloadButton.innerHTML = '<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M3 17a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H4a1 1 0 0 1-1-1zm3.293-7.707a1 1 0 0 1 1.414 0L9 10.586V3a1 1 0 1 1 2 0v7.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3a1 1 0 0 1 0-1.414z" clip-rule="evenodd"/></svg><span>下载 CraftEngine ZIP (' + formatBytes(blob.size) + ")</span>";
 
-  appendStat(numberValue(counts.items), "物品");
-  appendStat(numberValue(counts.furniture), "家具");
-  appendStat(numberValue(counts.blocks), "方块");
-  appendStat(numberValue(counts.recipes), "配方");
+  appendStat(numberValue(counts.items), "物品配置");
+  appendStat(numberValue(counts.categories), "分类目录");
+  appendStat(numberValue(counts.furniture), "家具模型");
+  appendStat(numberValue(counts.blocks), "自定义方块");
+  appendStat(numberValue(counts.recipes), "配方规则");
   appendStat(numberValue(counts.resources), "资源文件");
-  appendStat(diagnostics.length, "诊断");
+  appendStat(diagnostics.length, "诊断总数");
 
   const audit = objectValue(report.audit);
   auditSummary.replaceChildren();
@@ -716,18 +820,20 @@ function renderResult(blob: Blob, report: ConversionReport): void {
   appendAudit("缺失纹理", numberValue(audit.missingTextures));
   appendAudit("缺失 Blueprint", numberValue(audit.missingBlueprints));
   const auditFailures = numberValue(audit.missingModels) + numberValue(audit.missingTextures) + numberValue(audit.missingBlueprints);
-  auditBadge.textContent = Object.keys(audit).length === 0 ? "未运行" : auditFailures === 0 ? "通过" : auditFailures + " 缺失";
+  auditBadge.textContent = Object.keys(audit).length === 0 ? "未运行" : auditFailures === 0 ? "全量通过 ✓" : auditFailures + " 项缺失";
+  auditBadge.style.color = auditFailures === 0 ? "var(--green-bright)" : "var(--amber)";
 
   diagnosticSummary.replaceChildren();
   appendDiagnosticMetric(errors, "错误", "error");
   appendDiagnosticMetric(warnings, "警告", "warning");
-  appendDiagnosticMetric(lossy, "有损", "lossy");
-  diagnosticBadge.textContent = diagnosticGroups.length === diagnostics.length ? String(diagnostics.length) : diagnosticGroups.length + " 类";
-  diagnosticCount.textContent = diagnosticGroups.length === diagnostics.length ? String(diagnostics.length) : diagnosticGroups.length + " 类 / " + diagnostics.length + " 项";
+  appendDiagnosticMetric(lossy, "有损映射", "lossy");
+  diagnosticBadge.textContent = currentDiagnosticGroups.length === diagnostics.length ? String(diagnostics.length) : currentDiagnosticGroups.length + " 类";
+  diagnosticCount.textContent = currentDiagnosticGroups.length === diagnostics.length ? String(diagnostics.length) : currentDiagnosticGroups.length + " 类 / " + diagnostics.length + " 项";
   diagnosticDetails.classList.toggle("is-hidden", diagnostics.length === 0);
-  renderDiagnostics(diagnosticGroups);
+  renderDiagnostics(currentDiagnosticGroups);
   updateSteps("download");
-  window.setTimeout(() => resultTitle.focus(), 0);
+  showToast(success ? "🎉 转换成功，已生成 CraftEngine ZIP" : "⚠️ 转换生成完毕，请复核诊断", success);
+  window.setTimeout(() => resultTitle.focus(), 50);
   resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -736,14 +842,15 @@ function renderFatalError(error: unknown): void {
   resultPanel.classList.add("is-failed");
   resultTitle.textContent = "转换失败";
   resultMessage.textContent = error instanceof Error ? error.message : String(error);
-  resultEyebrow.textContent = "ERROR";
+  resultEyebrow.textContent = "ERROR / FAILED";
   resultMark.textContent = "×";
   downloadButton.classList.add("is-hidden");
   resultStats.replaceChildren();
   auditSummary.replaceChildren();
   diagnosticSummary.replaceChildren();
   diagnosticDetails.classList.add("is-hidden");
-  window.setTimeout(() => resultTitle.focus(), 0);
+  showToast("转换未能完成：" + (error instanceof Error ? error.message : String(error)), false);
+  window.setTimeout(() => resultTitle.focus(), 50);
   resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -776,6 +883,7 @@ async function runConversion(): Promise<void> {
       liveStatus.textContent = "转换已取消";
       progressPanel.classList.add("is-hidden");
       updateSteps(selectedSource ? "configure" : "select");
+      showToast("已取消转换");
     } else {
       setPhase("convert", "failed", "转换失败", 0);
       liveStatus.textContent = "转换失败";
@@ -798,15 +906,21 @@ function triggerDownload(): void {
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
+  showToast("开始下载：" + resultFilename);
 }
 
+// Event Listeners
 chooseZipButton.addEventListener("click", (event) => { event.stopPropagation(); zipInput.click(); });
 chooseFolderButton.addEventListener("click", (event) => { event.stopPropagation(); folderInput.click(); });
 changeInputButton.addEventListener("click", () => clearSource(false));
 clearButton.addEventListener("click", () => clearSource());
-convertAnotherButton.addEventListener("click", () => clearSource());
+convertAnotherButton.addEventListener("click", () => {
+  clearSource();
+  dropZone.scrollIntoView({ behavior: "smooth", block: "center" });
+});
 convertButton.addEventListener("click", () => { void runConversion(); });
 downloadButton.addEventListener("click", triggerDownload);
+
 cancelButton.addEventListener("click", () => {
   operationGeneration++;
   activeRequest?.abort();
@@ -817,10 +931,12 @@ cancelButton.addEventListener("click", () => {
   liveStatus.textContent = "转换已取消";
   updateSteps(selectedSource ? "configure" : "select");
 });
+
 zipInput.addEventListener("change", () => {
   const file = zipInput.files?.[0];
   if (file) setZipSource(file);
 });
+
 folderInput.addEventListener("change", () => {
   const files = Array.from(folderInput.files ?? []);
   if (files.length === 0) return;
@@ -835,17 +951,88 @@ dropZone.addEventListener("keydown", (event) => {
     zipInput.click();
   }
 });
-for (const name of ["dragenter", "dragover"]) dropZone.addEventListener(name, (event) => {
-  event.preventDefault();
-  dropZone.classList.add("is-dragging");
-});
-for (const name of ["dragleave", "drop"]) dropZone.addEventListener(name, (event) => {
-  event.preventDefault();
-  dropZone.classList.remove("is-dragging");
-});
+
+for (const name of ["dragenter", "dragover"]) {
+  dropZone.addEventListener(name, (event) => {
+    event.preventDefault();
+    dropZone.classList.add("is-dragging");
+  });
+}
+
+for (const name of ["dragleave", "drop"]) {
+  dropZone.addEventListener(name, (event) => {
+    event.preventDefault();
+    dropZone.classList.remove("is-dragging");
+  });
+}
+
 dropZone.addEventListener("drop", (event) => {
   if (!event.dataTransfer) return;
   void handleDrop(event.dataTransfer).catch((error) => showInputError(error instanceof Error ? error.message : String(error)));
+});
+
+// Diagnostic search & filter tabs
+document.querySelectorAll<HTMLButtonElement>(".filter-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".filter-tab").forEach((t) => t.classList.remove("is-active"));
+    tab.classList.add("is-active");
+    currentDiagnosticFilter = tab.dataset.filter ?? "all";
+    renderDiagnostics(currentDiagnosticGroups);
+  });
+});
+
+diagnosticSearch?.addEventListener("input", () => {
+  currentDiagnosticSearchQuery = diagnosticSearch.value;
+  renderDiagnostics(currentDiagnosticGroups);
+});
+
+copyDiagnosticsButton?.addEventListener("click", async (event) => {
+  event.stopPropagation();
+  const text = generateMarkdownDiagnosticReport();
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("✓ 诊断报告已复制到剪贴板");
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+    showToast("✓ 诊断报告已复制到剪贴板");
+  }
+});
+
+// Global Keyboard Shortcuts & Paste Handling
+window.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    if (selectedSource?.valid && !busy) {
+      event.preventDefault();
+      void runConversion();
+    }
+  } else if (event.key === "Escape") {
+    if (busy) {
+      event.preventDefault();
+      cancelButton.click();
+    }
+  }
+});
+
+window.addEventListener("paste", (event) => {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  for (const item of Array.from(items)) {
+    if (item.kind === "file") {
+      const file = item.getAsFile();
+      if (file && file.name.toLowerCase().endsWith(".zip")) {
+        event.preventDefault();
+        setZipSource(file);
+        break;
+      }
+    }
+  }
 });
 
 window.addEventListener("beforeunload", () => {

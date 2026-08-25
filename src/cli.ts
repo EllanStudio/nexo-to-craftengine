@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   }
   const result = await convert(parsed);
   const counts = result.diagnostics.counts();
-  console.log("Converted " + result.itemCount + " items, " + result.furnitureCount + " furniture, " + result.blockCount + " blocks, " + result.recipeCount + " recipes, " + result.soundCount + " sounds, " + result.glyphCount + " glyph images.");
+  console.log("Converted " + result.itemCount + " items, " + result.categoryCount + " categories, " + result.furnitureCount + " furniture, " + result.blockCount + " blocks, " + result.recipeCount + " recipes, " + result.soundCount + " sounds, " + result.glyphCount + " glyph images.");
   console.log("Copied " + result.resourceCount + " resource files. Diagnostics: " + counts.error + " errors, " + counts.warning + " warnings, " + counts.lossy + " lossy.");
   for (const line of result.diagnostics.formatLines().slice(0, 100)) console.error(line);
   if (result.diagnostics.items.length > 100) console.error("... " + (result.diagnostics.items.length - 100) + " more diagnostics are in the JSON report.");

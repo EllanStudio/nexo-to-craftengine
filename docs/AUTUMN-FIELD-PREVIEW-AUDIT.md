@@ -4,7 +4,7 @@
 
 ## 已确认的旧配置错误
 
-旧的 `field_lantern_ceiling` family `aef6f43d2cff9bfb` 展开后为：
+旧转换包中 `field_lantern_ceiling` 的具体元素展开后为：
 
 ~~~yaml
 pitch: 90
@@ -39,6 +39,6 @@ position: 0,-0.01,0
 - 同时允许 roof 的地面家具（例如 `field_haystack`、`field_signpost`）：地面 variant 改为 `pitch:90`、`rotation:0,1,0,0`、无 element yaw。
 - roof-only Barrier 仍为 `position: 0,-1,0`；灯光仍为 `0,-1.01,0`。方向修正不移动碰撞或光源。
 - `large_crop_streamer` 没有 ±90° pitch，不受本次方向修正影响。它的一格 Interaction 和宽模型仍是 Nexo 原包明确配置。
-- `field_haystack` 的一格 Barrier 与座位 `0,1,0` 仍按 Nexo 原包保留；只修复模型方向，不擅自扩大碰撞。
+- `field_haystack` 的一格 Barrier 与 Nexo 座位语义 `0,1,0` 保持不变；CE 配置写为 `0,0.4,0`，运行时固定 +0.6 后回到同一乘坐锚点，并由主 hitbox 接收点击。
 
-修正后 `field_lantern_ceiling` 的 family hash 为 `d86a8eda5cfb78e1`；hash 变化来自完整模板内容变化，不能继续使用旧的 `aef6f43d2cff9bfb`。
+修正后这些字段直接位于可读的 `configuration/furniture.yml` 中，不再需要查找或展开 family hash。

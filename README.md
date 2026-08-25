@@ -15,7 +15,7 @@
 
 - [Nexo 文档](https://docs.nexomc.com/)
 - [CraftEngine Wiki](https://xiao-momi.github.io/craft-engine-wiki/)
-- [CraftEngine Template System](https://xiao-momi.github.io/craft-engine-wiki/reference/template/)
+- [1robie/CraftEngineConverter](https://github.com/1robie/CraftEngineConverter)（直接构造可读配置的输出思路）
 - [CraftEngine 项目结构](https://xiao-momi.github.io/craft-engine-wiki/getting_start/project_structure/)
 - [Minecraft Wiki：资源包](https://zh.minecraft.wiki/w/资源包)
 - [Minecraft Wiki：物品模型映射](https://zh.minecraft.wiki/w/物品模型映射)
@@ -30,10 +30,11 @@
 - 自动推断作者命名空间，不要求 Web 页面手工输入
 - modern ItemModel、legacy CMD 与 hybrid 输出
 - bow/crossbow、damaged models、染色继承、玩家头特殊模型
-- 名称、Lore、属性、PDC、PotionEffects 和受支持的 Data Components
-- furniture 放置面、原生 rotate_furniture、1/16 Barrier grid、wall support profile
+- 名称、Lore、属性、PDC、PotionEffects；16 类 Nexo builder Components 按官方 Minecraft 1.21.11 codec 安全展开
+- CraftEngine 物品浏览器分类：Nexo FILE/DIRECTORY 结构、子分类、inventory.yml 名称/图标/槽位及 excludeFromInventory
+- furniture 基础 ground/ceiling/wall 放置面与原生 rotate_furniture；不生成重复的 1/16 grid/support profiles
 - furniture 显示变换、Interaction/Shulker/Ghast hitbox、seat、灯光开关、loot 与声音
-- 使用 CraftEngine 26.8 原生递归模板去重 furniture family、geometry、profile、灯光和事件；不逐家具展开数千行重复 YAML
+- 参考第三方转换器，仅输出实际基础变体及其灯光/开关分支，不生成哈希模板或数千行自动 profile
 - note/string/chorus custom block 的安全子集
 - shaped/shapeless/cooking/stonecutting/brewing recipes
 - sounds、languages、glyph/reference glyph、资源复制
@@ -52,7 +53,7 @@ pnpm build
 pnpm test
 ~~~
 
-当前完整测试集会编译 TypeScript，并验证 Nexo/CE/Minecraft 关键语义、ZIP 安全边界、Web API、模板展开、家具 profile、seat 和灯光坐标。
+当前完整测试集会编译 TypeScript，并验证 Nexo/CE/Minecraft 关键语义、ZIP 安全边界、Web API、精简家具变体、seat 和灯光坐标。
 
 ## 命令行
 
@@ -114,8 +115,8 @@ resources/
    ├─ pack.yml
    ├─ configuration/
    │  ├─ items.yml                   # 仅有已转换物品时生成
-   │  ├─ furniture.yml               # 家具 ID 到 family template 的短引用
-   │  ├─ furniture-templates.yml     # 仅有家具时生成；原生 CE 模板
+   │  ├─ categories.yml              # Nexo 物品浏览器结构与成员
+   │  ├─ furniture.yml               # 完整、可读的具体家具定义
    │  ├─ blocks.yml                  # 仅有自定义方块时生成
    │  ├─ recipes.yml                 # 仅有配方时生成
    │  ├─ sounds.yml                  # 仅有声音定义时生成
@@ -127,17 +128,17 @@ resources/
    └─ conversion-response.json
 ~~~
 
-### 为什么有两个 furniture 文件
+### 物品分类
 
-furniture.yml 中每个家具 ID 只引用一个作者命名空间内的 family template。furniture-templates.yml 保存按结构哈希去重的 variant、1/16 profile、灯光和事件模板。
+转换器会按 Nexo 1.26 的物品浏览器语义生成 [CraftEngine categories](https://xiao-momi.github.io/craft-engine-wiki/zh-Hans/configuration/category)：默认 `FILE` 模式让每个非空物品 YAML 成为一个主分类；`inventory.yml` 设为 `DIRECTORY` 时保留目录父分类，并通过 `#命名空间:id` 引用 `hidden: true` 的子分类。分类成员保持源文件顺序，成功转换且未设置 `excludeFromInventory: true` 的物品才会进入 `list`。
 
-CraftEngine 26.8 会在 furniture parser 之前递归展开这些模板；展开后的运行时仍然是完整、原生的 variants/events/behaviors：
+`NexoInventory.layout` 的 `itemname`/`displayname`/`title`、`icon` 和 `slot` 会分别转换为 CE 的 `name`、`icon` 和 `priority`；缺少布局时，名称由文件名生成，图标回退为分类首个有效物品。Nexo 没有直接等价来源的 CE `lore`、`conditions` 和 `all_items` 不会被凭空添加。
 
-- 没有伴生插件；
-- 没有运行时转换层；
-- 不省略 1/16 profile；
-- 相同 geometry/family 只写一次；
-- ${__NAMESPACE__} 和 ${__ID__} 在每个实际家具条目中恢复正确目标 ID。
+### 可读家具配置
+
+转换器参考 `1robie/CraftEngineConverter` 的直接配置对象思路，把每个家具的 `settings`、`variants`、`hitboxes`、`events`、`behavior` 和 `loot` 完整写入 `furniture.yml`。默认输出不再创建 `furniture-templates.yml`，也不会出现哈希命名的 `_nexo2ce/furniture/variant-shift/*`、`__nexo2ce_*` 参数或 `${...}` 模板表达式。
+
+与参考项目一样，每个家具只保留源配置启用的 `ground`、`ceiling`、`wall` 基础放置面。转换器不会再为 Barrier 自动制造 15 个高度 profile 或 `_nexo_wall_supported`，因此灯光开关也只为这些基础放置面生成必要分支；座位、hitbox、灯光和旋转仍保留。CraftEngine 26.8 已有的 hitbox 默认值（例如 `can_be_hit_by_projectile: true`、`scale: 1`、`peek: 0`）不再重复写出。
 
 两个文件必须一起安装，不要只复制 furniture.yml。
 

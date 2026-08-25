@@ -1,20 +1,19 @@
 import { access, lstat, mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { auditResourceGraph, type AuditSummary } from "./audit.js";
+import { convertCategories, type CategoryItem } from "./categories.js";
 import { DiagnosticBag } from "./diagnostics.js";
-import { compactFurnitureDefinition, mergeFurnitureTemplates } from "./furniture-templates.js";
 import { convertGlyphs, rewriteGlyphTags } from "./glyphs.js";
 import { convertItem, resolveItemTemplates, matchBukkitMaterial, type ConvertedItem, type ResolvedItem, type SourceItem } from "./items.js";
 import { loadYaml, writeJson, writeYaml } from "./io.js";
 import { convertMechanics } from "./mechanics.js";
-import { MINECRAFT_1_21_11_SOLID_BLOCK_COUNT } from "./minecraft-1.21.11.js";
 import { discoverModelAliases } from "./model-aliases.js";
 import { convertRecipe, type NexoRecipeType } from "./recipes.js";
 import { validateNamespace } from "./resource-location.js";
 import { copyResourcePack, findResourcePackRoot, writeLanguageResources } from "./resources.js";
 import { convertSounds } from "./sounds.js";
 import { inferAuthorNamespaceFromNexoFiles, type NamespaceInference } from "./source-namespace.js";
-import { asStringList, getBoolean, getNumber, getObject, getString, getValue, isObject, type JsonObject, type JsonValue } from "./types.js";
+import { asStringList, deepMerge, getBoolean, getNumber, getObject, getString, getValue, isObject, type JsonObject, type JsonValue } from "./types.js";
 
 export const NEXO_ITEM_NAMESPACE = "nexo";
 
@@ -37,6 +36,7 @@ export interface ConversionResult {
   diagnostics: DiagnosticBag;
   reportFile?: string;
   itemCount: number;
+  categoryCount: number;
   templateCount: number;
   furnitureCount: number;
   blockCount: number;
@@ -292,7 +292,7 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
   const protectedSources = [
     root,
     join(root, "items"), join(root, "item"), join(root, "glyphs"),
-    join(root, "settings.yml"), join(root, "mechanics.yml"),
+    join(root, "settings.yml"), join(root, "inventory.yml"), join(root, "mechanics.yml"),
     join(root, "sounds.yml"), join(root, "languages.yml"),
     ...RECIPE_TYPES.map((type) => join(root, "recipes", type)),
     ...(resourcePackRoot ? [resourcePackRoot, join(resourcePackRoot, "assets")] : []),
@@ -300,10 +300,18 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
   await prepareOutput(protectedSources, output, options.force);
 
   const settingsRoot = await loadOptionalObject(join(root, "settings.yml"), diagnostics);
+  const inventoryRoot = await loadOptionalObject(join(root, "inventory.yml"), diagnostics);
+  const settingsInventory = settingsRoot ? getObject(settingsRoot, "NexoInventory") ?? getObject(settingsRoot, "nexo_inventory") : undefined;
+  const fileInventory = inventoryRoot ? getObject(inventoryRoot, "NexoInventory") ?? getObject(inventoryRoot, "nexo_inventory") ?? inventoryRoot : undefined;
+  const mergedInventory = settingsInventory && fileInventory
+    ? deepMerge(settingsInventory, fileInventory)
+    : fileInventory ?? settingsInventory;
   const glyphSettings = settingsRoot ? getObject(settingsRoot, "Glyphs") : undefined;
   const defaultGlyphFont = glyphSettings ? getString(glyphSettings, "default_font") ?? namespace + ":default" : namespace + ":default";
   const defaultGlyphPermission = glyphSettings ? getString(glyphSettings, "default_permission") ?? "nexo.glyphs.<glyphid>" : "nexo.glyphs.<glyphid>";
   const glyphConversion = await convertGlyphs(root, namespace, diagnostics, defaultGlyphFont, defaultGlyphPermission);
+  const inventorySource = fileInventory ? join(root, "inventory.yml") : settingsInventory ? join(root, "settings.yml") : undefined;
+  const inventoryConfig = mergedInventory ? { NexoInventory: mergedInventory } : undefined;
   const mechanicsSettings = await loadOptionalObject(join(root, "mechanics.yml"), diagnostics);
   const furnitureSettings = mechanicsSettings ? getObject(mechanicsSettings, "furniture") : undefined;
   const furnitureDefaultProperties = furnitureSettings ? getObject(furnitureSettings, "default_properties") : undefined;
@@ -314,18 +322,12 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
   const sourceItems = await loadItems(root, diagnostics);
   const resolvedItems = resolveItemTemplates(sourceItems, diagnostics);
   const modelAliases = await discoverModelAliases(resourcePackRoot, resolvedItems, diagnostics);
-  // Nexo custom NoteBlocks are backed by Bukkit NOTE_BLOCK, whose 1.21.11
-  // Material.isSolid() value is true. CE exposes their custom ids at runtime,
-  // so include every converted id in the wall-support predicate.
-  const solidCustomBlockIds = resolvedItems
-    .filter((entry) => !entry.template && getObject(getObject(entry.config, "Mechanics") ?? {}, "noteblock") !== undefined)
-    .map((entry) => namespace + ":" + entry.id);
   const cmd = allocateCustomModelData(resolvedItems, options, diagnostics);
   const items: JsonObject = {};
   const furniture: JsonObject = {};
-  const furnitureTemplates: JsonObject = {};
   const blocks: JsonObject = {};
   const mappings: JsonObject = {};
+  const categoryItems: CategoryItem[] = [];
   let templateCount = 0;
   for (const sourceItem of resolvedItems) {
     if (sourceItem.template) {
@@ -340,15 +342,21 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
     if (!converted) continue;
     const mechanics = convertMechanics(
       rewrittenItem.config, converted.targetId, converted.baseModel, diagnostics, sourceItem.source, sourceItem.id,
-      furnitureDefaultProperties, { defaultRotatableOnSneak, rotationGamemodes, solidCustomBlockIds },
+      furnitureDefaultProperties, { defaultRotatableOnSneak, rotationGamemodes },
     );
     if (mechanics.behavior.length === 1) converted.config.behavior = mechanics.behavior[0]!;
     else if (mechanics.behavior.length > 1) converted.config.behaviors = mechanics.behavior;
     items[converted.targetId] = converted.config;
+    categoryItems.push({
+      source: sourceItem.source,
+      sourceId: sourceItem.id,
+      targetId: converted.targetId,
+      config: rewrittenItem.config,
+    });
     if (mechanics.furniture) {
-      const compacted = compactFurnitureDefinition(mechanics.furniture, converted.targetId);
-      furniture[converted.targetId] = compacted.definition;
-      mergeFurnitureTemplates(furnitureTemplates, compacted.templates);
+      // Keep generated packs reviewable: concrete CE variants belong directly to
+      // their furniture ID instead of a hash-named template/argument graph.
+      furniture[converted.targetId] = mechanics.furniture;
     }
     if (mechanics.block) blocks[converted.targetId] = mechanics.block;
     mappings[sourceItem.id] = {
@@ -359,6 +367,10 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
     };
   }
 
+  const categories = convertCategories({
+    root, namespace, items: categoryItems, inventory: inventoryConfig, inventorySource, diagnostics,
+    rewriteText: inventorySource ? (text, field) => rewriteGlyphTags(text, glyphConversion.entries, diagnostics, inventorySource, field) as string : undefined,
+  });
   const recipes = await convertRecipes(root, namespace, diagnostics);
   const soundsRoot = await loadOptionalObject(join(root, "sounds.yml"), diagnostics);
   const sounds = soundsRoot ? convertSounds(soundsRoot, diagnostics, join(root, "sounds.yml")) : {};
@@ -379,9 +391,7 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
   // makes reviews misleading, so create each configuration file only when it has
   // at least one converted definition.
   if (Object.keys(items).length > 0) await writeYaml(join(output, "configuration", "items.yml"), { items });
-  if (Object.keys(furnitureTemplates).length > 0) {
-    await writeYaml(join(output, "configuration", "furniture-templates.yml"), { templates: furnitureTemplates });
-  }
+  if (Object.keys(categories).length > 0) await writeYaml(join(output, "configuration", "categories.yml"), { categories });
   if (Object.keys(furniture).length > 0) await writeYaml(join(output, "configuration", "furniture.yml"), { furniture });
   if (Object.keys(blocks).length > 0) await writeYaml(join(output, "configuration", "blocks.yml"), { blocks });
   if (Object.keys(recipes).length > 0) await writeYaml(join(output, "configuration", "recipes.yml"), { recipes });
@@ -405,10 +415,6 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
       nexo: { version: "1.26", jarSha256: "FA6877A46A8C2779B0B0C78C258931DC85AECDE6E70234D91EA8624F91B75B16" },
       craftEngine: { version: "26.8", commit: "c9a2ab61db6f5cea7314f506b098dea08c7bd323" },
       itemDefinitions: "Minecraft 1.21.11 client item-definition and tint semantics",
-      materialSolidity: {
-        minecraft: "1.21.11", paperBuild: 116, solidBlockCount: MINECRAFT_1_21_11_SOLID_BLOCK_COUNT,
-        paperJarSha256: "E708E8C132DC143FFD73528CCCB9532E2EB17628B1A0EEE74469BF466C7003F8",
-      },
     },
     input: root,
     output,
@@ -426,6 +432,7 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
       sourceItems: sourceItems.length,
       templates: templateCount,
       items: Object.keys(items).length,
+      categories: Object.keys(categories).length,
       furniture: Object.keys(furniture).length,
       blocks: Object.keys(blocks).length,
       recipes: Object.keys(recipes).length,
@@ -442,6 +449,7 @@ export async function convert(options: ConvertOptions): Promise<ConversionResult
   return {
     success, diagnostics, reportFile,
     itemCount: Object.keys(items).length,
+    categoryCount: Object.keys(categories).length,
     templateCount,
     furnitureCount: Object.keys(furniture).length,
     blockCount: Object.keys(blocks).length,

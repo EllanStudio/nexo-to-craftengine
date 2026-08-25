@@ -35,8 +35,8 @@ ZIP 不会在页面中提前完整解压。服务端在临时隔离目录中校�
 4. 调用与 CLI 完全相同的 TypeScript 语义转换核心；
 5. 清理报告中的临时绝对路径；
 6. 生成 `conversion-response.json`；
-7. 按 CraftEngine Wiki 的 resources/<作者命名空间>/pack.yml 结构封装并返回 ZIP；有家具时同时包含短引用 furniture.yml 与原生模板 furniture-templates.yml；
-8. 页面读取报告，显示转换计数、资源审计与诊断，然后提供下载。
+7. 按 CraftEngine Wiki 的 resources/<作者命名空间>/pack.yml 结构封装并返回 ZIP；有物品时生成 categories.yml，有家具时生成包含完整具体定义的可读 furniture.yml；
+8. 页面读取报告，显示转换计数、资源审计与分类诊断，提供一键复制 Markdown 诊断报告、实时按级别与关键词检索，并展示文件大小与下载按钮。
 
 即使报告含错误，若转换器已经生成可检查的输出，Web 服务仍返回 ZIP；页面会显示“需要检查”，而不是把它误报成网络失败。
 

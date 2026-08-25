@@ -87,6 +87,7 @@ interface ConversionMetadata {
   };
   output: {
     items: number;
+    categories: number;
     templates: number;
     furniture: number;
     blocks: number;
@@ -335,6 +336,7 @@ function conversionMetadata(
     },
     output: {
       items: result.itemCount,
+      categories: result.categoryCount,
       templates: result.templateCount,
       furniture: result.furnitureCount,
       blocks: result.blockCount,
@@ -481,6 +483,7 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<Lo
         response.setHeader("X-Request-ID", requestId);
         response.setHeader("X-Conversion-Success", String(result.success));
         response.setHeader("X-Conversion-Items", String(result.itemCount));
+        response.setHeader("X-Conversion-Categories", String(result.categoryCount));
         response.setHeader("X-Conversion-Errors", String(result.diagnostics.counts().error ?? 0));
         response.setHeader("X-Conversion-Warnings", String(result.diagnostics.counts().warning ?? 0));
         response.setHeader("X-Conversion-Namespace", result.namespace);

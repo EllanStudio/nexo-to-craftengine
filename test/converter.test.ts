@@ -3,15 +3,14 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { parse, stringify } from "yaml";
+import { parse } from "yaml";
+import { convertCategories } from "../src/categories.js";
 import { convert } from "../src/converter.js";
 import { DiagnosticBag } from "../src/diagnostics.js";
-import { compactFurnitureDefinition, mergeFurnitureTemplates } from "../src/furniture-templates.js";
 import { convertGlyphs, rewriteGlyphTags } from "../src/glyphs.js";
 import { convertItem, matchBukkitMaterial, resolveItemTemplates, type ResolvedItem, type SourceItem } from "../src/items.js";
 import { loadYaml } from "../src/io.js";
 import { convertMechanics } from "../src/mechanics.js";
-import { MINECRAFT_1_21_11_SOLID_BLOCK_COUNT, MINECRAFT_1_21_11_SOLID_BLOCK_PATTERN } from "../src/minecraft-1.21.11.js";
 import { discoverModelAliases } from "../src/model-aliases.js";
 import { inferAuthorNamespaceFromBundlePaths } from "../src/source-namespace.js";
 import { buildLegacyModel, convertModels, readPackModel } from "../src/models.js";
@@ -19,27 +18,115 @@ import { convertRecipe } from "../src/recipes.js";
 import { normalizeModelLocation, normalizeTextureLocation } from "../src/resource-location.js";
 import { convertSounds } from "../src/sounds.js";
 import { isObject, type JsonObject } from "../src/types.js";
-import { expandCraftEngineTemplateEntry } from "./craftengine-template-expander.js";
 
 function context(diagnostics: DiagnosticBag, item = "demo") {
   return { source: "fixture.yml", item, diagnostics };
 }
 
-test("locked Minecraft 1.21.11 solidity table matches Bukkit semantics", () => {
-  const pattern = new RegExp("^(?:" + MINECRAFT_1_21_11_SOLID_BLOCK_PATTERN + ")$");
-  assert.equal(MINECRAFT_1_21_11_SOLID_BLOCK_COUNT, 913);
-  for (const solid of ["minecraft:stone", "minecraft:oak_door", "minecraft:oak_slab", "minecraft:white_banner"]) {
-    assert.equal(pattern.test(solid), true);
-  }
-  for (const nonSolid of ["minecraft:air", "minecraft:water", "minecraft:dandelion", "minecraft:oak_button"]) {
-    assert.equal(pattern.test(nonSolid), false);
-  }
-});
-
 test("resource locations use Minecraft's real default namespace", () => {
   const diagnostics = new DiagnosticBag();
   assert.equal(normalizeModelLocation("custom/chair.json", diagnostics, {}), "minecraft:custom/chair");
   assert.equal(normalizeTextureLocation("demo:block/chair.png", diagnostics, {}), "demo:block/chair");
+  assert.equal(diagnostics.items.length, 0);
+});
+
+test("Nexo FILE inventory becomes ordered CraftEngine categories", () => {
+  const root = join(process.cwd(), "fixtures", "Nexo");
+  const diagnostics = new DiagnosticBag();
+  const categories = convertCategories({
+    root,
+    namespace: "demo",
+    diagnostics,
+    inventorySource: join(root, "inventory.yml"),
+    inventory: { NexoInventory: {
+      type: "FILE",
+      layout: {
+        tools: { itemname: "<gold>Tools</gold>", icon: "nexo:hammer", slot: 3 },
+        decor: { title: "Seasonal Decor", slot: 1 },
+      },
+    } },
+    items: [
+      { source: join(root, "items", "tools.yml"), sourceId: "hammer", targetId: "demo:hammer", config: {} },
+      { source: join(root, "items", "tools.yml"), sourceId: "chisel", targetId: "demo:chisel", config: { excludeFromInventory: true } },
+      { source: join(root, "items", "seasonal", "decor.yml"), sourceId: "lantern", targetId: "demo:lantern", config: {} },
+    ],
+  });
+
+  assert.deepEqual(Object.keys(categories), ["demo:seasonal/decor", "demo:tools"]);
+  assert.deepEqual(categories["demo:seasonal/decor"], {
+    name: "<!i><green>Seasonal Decor</green>",
+    icon: "demo:lantern",
+    priority: 0,
+    list: ["demo:lantern"],
+  });
+  assert.deepEqual(categories["demo:tools"], {
+    name: "<!i><green><gold>Tools</gold></green>",
+    icon: "demo:hammer",
+    priority: 2,
+    list: ["demo:hammer"],
+  });
+  assert.equal(diagnostics.items.length, 0);
+});
+
+test("invalid local category icons fall back to a converted member", () => {
+  const root = join(process.cwd(), "fixtures", "Nexo");
+  const diagnostics = new DiagnosticBag();
+  const categories = convertCategories({
+    root,
+    namespace: "demo",
+    diagnostics,
+    inventorySource: join(root, "inventory.yml"),
+    inventory: { NexoInventory: { layout: { demo: { icon: "nexo:missing" } } } },
+    items: [
+      { source: join(root, "items", "demo.yml"), sourceId: "lamp", targetId: "demo:lamp", config: {} },
+    ],
+  });
+
+  assert.equal((categories["demo:demo"] as JsonObject).icon, "demo:lamp");
+  assert.equal(diagnostics.items[0]?.code, "CATEGORY_ICON_FALLBACK");
+  assert.equal(diagnostics.items[0]?.lossy, true);
+});
+
+test("Nexo DIRECTORY inventory becomes visible parents and hidden CE subcategories", () => {
+  const root = join(process.cwd(), "fixtures", "Nexo");
+  const diagnostics = new DiagnosticBag();
+  const categories = convertCategories({
+    root,
+    namespace: "demo",
+    diagnostics,
+    inventory: { NexoInventory: {
+      type: "DIRECTORY",
+      directory_icon: "nexo:chair",
+      layout: {
+        furniture: {
+          itemname: "Furniture", slot: 1,
+          chairs: { itemname: "Chairs", slot: 2 },
+          tables: { itemname: "Tables", slot: 1 },
+        },
+        root: { itemname: "Root Items", slot: 2 },
+      },
+    } },
+    items: [
+      { source: join(root, "items", "root.yml"), sourceId: "token", targetId: "demo:token", config: {} },
+      { source: join(root, "items", "furniture", "chairs.yml"), sourceId: "chair", targetId: "demo:chair", config: {} },
+      { source: join(root, "items", "furniture", "tables.yml"), sourceId: "table", targetId: "demo:table", config: {} },
+    ],
+  });
+
+  assert.deepEqual((categories["demo:furniture"] as JsonObject).list, [
+    "#demo:furniture/tables",
+    "#demo:furniture/chairs",
+  ]);
+  assert.equal((categories["demo:furniture"] as JsonObject).priority, 0);
+  assert.equal((categories["demo:furniture"] as JsonObject).icon, "demo:chair");
+  assert.equal((categories["demo:root"] as JsonObject).priority, 1);
+  assert.deepEqual(categories["demo:furniture/tables"], {
+    name: "<!i><green>Tables</green>",
+    icon: "demo:table",
+    list: ["demo:table"],
+    hidden: true,
+  });
+  assert.equal((categories["demo:furniture/chairs"] as JsonObject).hidden, true);
   assert.equal(diagnostics.items.length, 0);
 });
 
@@ -102,6 +189,7 @@ test("converter loads valid YAML from both items and item directories", async ()
     });
     assert.equal(result.success, true, result.diagnostics.formatLines().join("\n"));
     assert.equal(result.itemCount, 2);
+    assert.equal(result.categoryCount, 2);
     const yaml = parse(await readFile(join(output, "configuration", "items.yml"), "utf8")) as JsonObject;
     assert.deepEqual(Object.keys(yaml.items as JsonObject).sort(), ["demo:plural", "demo:singular"]);
 
@@ -118,6 +206,7 @@ test("converter loads valid YAML from both items and item directories", async ()
     });
     assert.equal(aliasResult.success, true, aliasResult.diagnostics.formatLines().join("\n"));
     assert.equal(aliasResult.itemCount, 1, "item/items aliases to one physical directory must load once");
+    assert.equal(aliasResult.categoryCount, 1);
     assert.equal(aliasResult.diagnostics.items.some((entry) => entry.code === "DUPLICATE_ITEM_ID"), false);
 
     const hardlinkInput = join(temp, "HardlinkNexo");
@@ -132,6 +221,7 @@ test("converter loads valid YAML from both items and item directories", async ()
     });
     assert.equal(hardlinkResult.success, true, hardlinkResult.diagnostics.formatLines().join("\n"));
     assert.equal(hardlinkResult.itemCount, 1, "hard-linked item YAML aliases must load once");
+    assert.equal(hardlinkResult.categoryCount, 1);
     assert.equal(hardlinkResult.diagnostics.items.some((entry) => entry.code === "DUPLICATE_ITEM_ID"), false);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
@@ -273,9 +363,9 @@ test("Components use Nexo's exact whitelist, clamps, and vanilla codec shapes", 
   assert.deepEqual(components.glider, {});
   assert.equal(components.minimum_attack_charge, 1);
   assert.deepEqual(components.tooltip_display, { hide_tooltip: false, hidden_components: ["minecraft:lore", "minecraft:custom_model_data"] });
-  assert.equal(components.tool, undefined);
+  assert.deepEqual(components.tool, { rules: [], can_destroy_blocks_in_creative: false });
   assert.equal(components.Potion_Contents, undefined);
-  assert.ok(diagnostics.items.some((entry) => entry.code === "COMPONENT_CODEC_MANUAL" && entry.lossy));
+  assert.equal(diagnostics.items.some((entry) => entry.code === "COMPONENT_CODEC_MANUAL"), false);
   assert.ok(diagnostics.items.some((entry) => entry.code === "NEXO_COMPONENT_UNKNOWN_IGNORED"));
 });
 
@@ -395,6 +485,22 @@ test("furniture defaults preserve Nexo STRICT and FIXED scale semantics", () => 
   assert.equal(element.position, undefined);
 });
 
+test("furniture displays inherit dyed color from the placed source item", () => {
+  const diagnostics = new DiagnosticBag();
+  const converted = convertMechanics({ Mechanics: { furniture: {
+    limited_placing: { floor: true, roof: false, wall: false },
+    properties: { display_transform: "FIXED" },
+    hitbox: {},
+  } } }, "demo:dyed_chair", "demo:item/dyed_chair", diagnostics, "fixture.yml", "dyed_chair");
+  const ground = (converted.furniture!.variants as JsonObject).ground as JsonObject;
+  const element = (ground.elements as JsonObject[])[0]!;
+
+  // CraftEngine 26.8 copies the actual placed ItemStack component through this
+  // tint source instead of rebuilding the default, uncolored display item.
+  assert.deepEqual(element.tint_source, ["minecraft:dyed_color"]);
+  assert.equal(diagnostics.items.length, 0);
+});
+
 test("limited_placing preserves Nexo nested false/default plane semantics", () => {
   const diagnostics = new DiagnosticBag();
   const config: JsonObject = { Mechanics: { furniture: {
@@ -436,19 +542,17 @@ test("FIXED floor/roof quarter turns use CE-stable equivalent transforms", () =>
   const groundHitboxes = ground.hitboxes as JsonObject[];
   assert.equal(groundHitboxes[0]!.position, "-1,1.5,-3"); // Nexo packet origin is display Y - 0.5.
   assert.equal(groundHitboxes[1]!.position, "-1,2,-3"); // Shulker uses exact display base.
-  assert.equal(groundHitboxes[1]!.scale, 1); // invalid compact numbers use Nexo defaults
-  assert.equal(groundHitboxes[1]!.peek, 0);
+  assert.equal(groundHitboxes[1]!.scale, undefined); // CE parser supplies Nexo's fallback scale 1.
+  assert.equal(groundHitboxes[1]!.peek, undefined); // CE parser supplies fallback peek 0.
   assert.equal(groundHitboxes[2]!.scale, 0.25);
   const ceilingHitboxes = ceiling.hitboxes as JsonObject[];
   assert.equal(ceilingHitboxes[0]!.position, "-1,1.49,-3");
   assert.ok(diagnostics.items.some((entry) => entry.code === "GHAST_VISIBLE_UNSUPPORTED"));
 
-  const seatProxy = groundHitboxes[3]!;
-  assert.equal(seatProxy.position, "-1,0.6,-2");
-  assert.deepEqual(seatProxy.seats, ["-1,0.1,-2"]);
-  const ceilingSeat = (ceiling.hitboxes as JsonObject[])[3]!;
-  assert.equal(ceilingSeat.position, "-1,0.59,-2");
-  assert.deepEqual(ceilingSeat.seats, ["-1,0.09,-2"]);
+  assert.equal(groundHitboxes.length, 3, "existing hitboxes must replace the occluded tiny seat proxy");
+  for (const hitbox of groundHitboxes) assert.deepEqual(hitbox.seats, ["-1,0,-2"]);
+  assert.equal(ceilingHitboxes.length, 3);
+  for (const hitbox of ceilingHitboxes) assert.deepEqual(hitbox.seats, ["-1,-0.01,-2"]);
 });
 
 test("FIXED quarter-turn recomposition falls back for non-commuting display transforms", () => {
@@ -501,14 +605,14 @@ test("Nexo furniture lights become CE glowing variants with persistent right-cli
   const converted = convertMechanics(config, "demo:lamp", "demo:item/lamp", diagnostics, "fixture.yml", "lamp");
   const furniture = converted.furniture!;
   const variants = furniture.variants as JsonObject;
-  assert.equal(Object.keys(variants).length, 32);
-  assert.ok(variants._nexo_ground_barrier_grid_8);
+  assert.deepEqual(Object.keys(variants), ["ground", "ground_unlit"]);
   assert.deepEqual(variants.ground_unlit, variants.ground);
-  assert.deepEqual(variants._nexo_ground_barrier_grid_8_unlit, variants._nexo_ground_barrier_grid_8);
+  assert.equal(Object.keys(variants).some((name) => name.startsWith("_nexo_")), false);
   const groundHitboxes = (variants.ground as JsonObject).hitboxes as JsonObject[];
   assert.equal(groundHitboxes.some((entry) => entry._nexo_barrier !== undefined), false);
 
-  const behaviors = furniture.behaviors as JsonObject[];
+  assert.equal(furniture.behaviors, undefined, "furniture behavior key must stay singular");
+  const behaviors = furniture.behavior as JsonObject[];
   assert.equal(behaviors[0]!.type, "glowing_furniture");
   const lights = ((behaviors[0]!.variants as JsonObject).ground as JsonObject[]);
   assert.deepEqual(lights, [
@@ -520,7 +624,7 @@ test("Nexo furniture lights become CE glowing variants with persistent right-cli
   const events = furniture.events as JsonObject[];
   const functions = events.find((event) => event.on === "right_click")!.functions as JsonObject[];
   const cases = functions[0]!.cases as JsonObject[];
-  assert.equal(cases.length, 32);
+  assert.equal(cases.length, 2);
   assert.ok(cases.some((entry) => entry.when === "ground"));
   assert.ok(cases.some((entry) => entry.when === "ground_unlit"));
   assert.equal(functions[1]!.type, "update_interaction_tick");
@@ -529,7 +633,7 @@ test("Nexo furniture lights become CE glowing variants with persistent right-cli
   assert.ok(diagnostics.items.some((entry) => entry.code === "NEXO_LIGHT_BARRIER_OVERLAP_IGNORED"));
 });
 
-test("furniture light positions include anchor offsets before grid and wall profile deltas", () => {
+test("furniture light positions follow only explicit placement anchors", () => {
   const diagnostics = new DiagnosticBag();
   const fixed = convertMechanics({ Mechanics: { furniture: {
     limited_placing: { floor: true, roof: true, wall: true },
@@ -537,26 +641,18 @@ test("furniture light positions include anchor offsets before grid and wall prof
     hitbox: { barriers: ["0,0,0"] },
     lights: { lights: ["0,1,0 14"] },
   } } }, "demo:fixed_lamp", "demo:item/fixed_lamp", diagnostics, "fixture.yml", "fixed_lamp").furniture!;
-  const fixedLights = (((fixed.behaviors as JsonObject[])[0]!.variants) as JsonObject);
+  const fixedLights = (((fixed.behavior as JsonObject[])[0]!.variants) as JsonObject);
   assert.deepEqual(fixedLights.ground, [{ position: "0,1,0", level: 14 }]);
   assert.deepEqual(fixedLights.ceiling, [{ position: "0,0.99,0", level: 14 }]);
   assert.deepEqual(fixedLights.wall, [{ position: "0,1,0.01", level: 14 }]);
-  assert.deepEqual(fixedLights._nexo_ground_barrier_grid_8, [{ position: "0,1.5,0", level: 14 }]);
-  assert.deepEqual(fixedLights._nexo_ceiling_barrier_grid_8, [{ position: "0,0.49,0", level: 14 }]);
-  assert.deepEqual(fixedLights._nexo_wall_supported, [{ position: "0,1,0.5", level: 14 }]);
-  const fixedCompacted = compactFurnitureDefinition(fixed, "demo:fixed_lamp");
-  const fixedExpanded = expandCraftEngineTemplateEntry(
-    fixedCompacted.definition, fixedCompacted.templates, "demo:fixed_lamp",
-  );
-  assert.deepEqual(fixedExpanded.behaviors, fixed.behaviors);
-
+  assert.deepEqual(Object.keys(fixedLights), ["ground", "ceiling", "wall"]);
   const nonFixed = convertMechanics({ Mechanics: { furniture: {
     limited_placing: { floor: true, roof: false, wall: false },
     properties: { display_transform: "HEAD" },
     hitbox: { interactions: ["0,0,0 1,1"] },
     lights: { lights: ["0,1,0 10"] },
   } } }, "demo:head_lamp", "demo:item/head_lamp", diagnostics, "fixture.yml", "head_lamp").furniture!;
-  const nonFixedLights = (((nonFixed.behaviors as JsonObject[])[0]!.variants) as JsonObject);
+  const nonFixedLights = (((nonFixed.behavior as JsonObject[])[0]!.variants) as JsonObject);
   assert.deepEqual(nonFixedLights.ground, [{ position: "0,1.5,0", level: 10 }]);
 });
 
@@ -607,12 +703,30 @@ test("nested rotatable, toggleable light, and seats preserve Nexo interaction or
   assert.equal(functions[3]!.on_failure, undefined);
 });
 
+test("seat-only furniture keeps a tiny clickable fallback proxy", () => {
+  const diagnostics = new DiagnosticBag();
+  const converted = convertMechanics({ Mechanics: { furniture: {
+    limited_placing: { floor: true, roof: false, wall: false },
+    properties: { display_transform: "FIXED" },
+    hitbox: {},
+    seats: ["0,0.6,0"],
+  } } }, "demo:seat_only", "demo:item/seat_only", diagnostics, "fixture.yml", "seat_only");
+  const ground = (converted.furniture!.variants as JsonObject).ground as JsonObject;
+  const hitboxes = ground.hitboxes as JsonObject[];
+  assert.equal(hitboxes.length, 1);
+  assert.deepEqual(
+    { type: hitboxes[0]!.type, position: hitboxes[0]!.position, width: hitboxes[0]!.width, height: hitboxes[0]!.height, seats: hitboxes[0]!.seats },
+    { type: "interaction", position: "0,0.6,0", width: 0.1, height: 0.1, seats: ["0,0,0"] },
+  );
+});
+
 test("wall Barriers stay block-centered while the FIXED model uses Nexo's wall offset", () => {
   const diagnostics = new DiagnosticBag();
   const converted = convertMechanics({ Mechanics: { furniture: {
     limited_placing: { floor: false, roof: false, wall: true },
     properties: { display_transform: "FIXED", scale: "0.5,0.5,0.5" },
     hitbox: { interactions: ["0,0,0 1,1"], barriers: ["0,0,0"] },
+    seats: ["0,0.6,0"],
   } } }, "demo:wall", "demo:item/wall", diagnostics, "fixture.yml", "wall");
   const wall = (converted.furniture!.variants as JsonObject).wall as JsonObject;
   const element = (wall.elements as JsonObject[])[0]!;
@@ -622,23 +736,11 @@ test("wall Barriers stay block-centered while the FIXED model uses Nexo's wall o
   assert.equal(element.position, "0,0,0.01");
   assert.equal(interaction.position, "0,-0.5,0.01");
   assert.equal(barrier.position, "0,-0.5,0.5");
-  const supported = (converted.furniture!.variants as JsonObject)._nexo_wall_supported as JsonObject;
-  assert.equal(((supported.elements as JsonObject[])[0]!.position), "0,0,0.5");
-  const supportedHitboxes = supported.hitboxes as JsonObject[];
-  assert.equal(supportedHitboxes.find((entry) => entry.type === "interaction")!.position, "0,-0.5,0.5");
-  assert.equal(supportedHitboxes.find((entry) => entry.type === "shulker")!.position, "0,-0.5,0.5");
-  const placeFunctions = (((converted.furniture!.events as JsonObject[])[0]!.functions) as JsonObject[]);
-  assert.equal(placeFunctions.length, 4);
-  assert.deepEqual(placeFunctions.map((entry) => ((entry.conditions as JsonObject[])[1]!.expression)), [
-    "ABS(<arg:furniture.yaw>-(-90))<0.01",
-    "ABS(<arg:furniture.yaw>-(90))<0.01",
-    "ABS(<arg:furniture.yaw>-(0))<0.01",
-    "ABS(<arg:furniture.yaw>-(180))<0.01",
-  ]);
-  const matchBlock = (placeFunctions[0]!.conditions as JsonObject[])[2]!;
-  assert.equal(matchBlock.type, "match_block");
-  assert.equal(matchBlock.regex, true);
-  assert.ok(String((matchBlock.blocks as string[])[0]).includes("minecraft:"));
+  for (const hitbox of hitboxes) assert.deepEqual(hitbox.seats, ["0,0,0.01"]);
+  const wallVariants = converted.furniture!.variants as JsonObject;
+  assert.deepEqual(Object.keys(wallVariants), ["wall"]);
+  const wallEvents = (converted.furniture!.events ?? []) as JsonObject[];
+  assert.equal(wallEvents.some((event) => event.on === "place"), false);
   assert.equal(diagnostics.items.some((entry) => entry.code === "FURNITURE_WALL_SUPPORT_OFFSET_DYNAMIC"), false);
 
   const noOffset = convertMechanics({ Mechanics: { furniture: {
@@ -650,7 +752,7 @@ test("wall Barriers stay block-centered while the FIXED model uses Nexo's wall o
   const noOffsetWall = noOffsetVariants.wall as JsonObject;
   assert.equal((noOffsetWall.elements as JsonObject[])[0]!.position, "0,0,0.01");
   assert.equal((noOffsetWall.hitboxes as JsonObject[]).find((entry) => entry.type === "interaction")!.position, "0,-0.5,0.01");
-  assert.ok(noOffsetVariants._nexo_wall_supported, "offset_against_blocks gates display translation correction, not Nexo's entity anchor");
+  assert.deepEqual(Object.keys(noOffsetVariants), ["wall"]);
 });
 
 test("ceiling Barriers use the target block bottom while displays keep Nexo's clearance", () => {
@@ -664,9 +766,9 @@ test("ceiling Barriers use the target block bottom while displays keep Nexo's cl
   const ceiling = variants.ceiling as JsonObject;
   assert.equal((ceiling.elements as JsonObject[])[0]!.position, "0,-0.01,0");
   assert.equal((ceiling.hitboxes as JsonObject[])[0]!.position, "0,-1,0");
-  const halfHeightRay = variants._nexo_ceiling_barrier_grid_8 as JsonObject;
-  assert.equal((halfHeightRay.elements as JsonObject[])[0]!.position, "0,-0.51,0");
-  assert.equal((halfHeightRay.hitboxes as JsonObject[])[0]!.position, "0,-1.5,0");
+  assert.deepEqual(Object.keys(variants), ["ceiling"]);
+  const events = (converted.furniture!.events ?? []) as JsonObject[];
+  assert.equal(events.some((event) => event.on === "place"), false);
 });
 
 test("Autumn signpost, haystack, and both streamers retain Nexo world-space semantics", () => {
@@ -681,6 +783,22 @@ test("Autumn signpost, haystack, and both streamers retain Nexo world-space sema
   const haystackSource = structuredClone(barrierSource);
   ((haystackSource.Mechanics as JsonObject).furniture as JsonObject).seats = ["0.0,1.0,0.0"];
   const haystack = convertMechanics(haystackSource, "lanshan_autumn_field:field_haystack", "lanshan_autumn_field:item/field_haystack", diagnostics, "autumn.yml", "field_haystack").furniture!;
+
+  const chairSource = structuredClone(barrierSource);
+  const chairFurniture = (chairSource.Mechanics as JsonObject).furniture as JsonObject;
+  chairFurniture.limited_placing = { roof: false, floor: true, wall: false };
+  chairFurniture.seats = ["0.0,0.6,0.0"];
+  const chair = convertMechanics(chairSource, "lanshan_autumn_field:field_chair", "lanshan_autumn_field:item/field_chair", diagnostics, "autumn.yml", "field_chair").furniture!;
+  const chairGroundHitboxes = (((chair.variants as JsonObject).ground as JsonObject).hitboxes as JsonObject[]);
+  assert.equal(chairGroundHitboxes.length, 1, "field_chair must not retain an occluded 0.1x0.1 seat proxy");
+  assert.deepEqual(chairGroundHitboxes[0]!.seats, ["0,0,0"], "CE +0.6 must land the player at Nexo Y=0.6");
+
+  const haystackVariants = haystack.variants as JsonObject;
+  assert.deepEqual((((haystackVariants.ground as JsonObject).hitboxes as JsonObject[])[0]!.seats), ["0,0.4,0"]);
+  assert.deepEqual((((haystackVariants.ceiling as JsonObject).hitboxes as JsonObject[])[0]!.seats), ["0,0.39,0"]);
+  assert.deepEqual((((haystackVariants.wall as JsonObject).hitboxes as JsonObject[])[0]!.seats), ["0,0.4,0.01"]);
+  assert.deepEqual(Object.keys(haystackVariants), ["ground", "ceiling", "wall"]);
+
   for (const converted of [signpost, haystack]) {
     const variants = converted.variants as JsonObject;
     const groundElement = (((variants.ground as JsonObject).elements as JsonObject[])[0])!;
@@ -710,16 +828,8 @@ test("Autumn signpost, haystack, and both streamers retain Nexo world-space sema
   const wall = (large.variants as JsonObject).wall as JsonObject;
   assert.equal((wall.elements as JsonObject[])[0]!.position, "0,0,0.01");
   assert.equal((wall.hitboxes as JsonObject[])[0]!.position, "0,-0.5,0.01");
-  const compactLarge = compactFurnitureDefinition(large, "lanshan_autumn_field:large_crop_streamer");
-  const compactSmall = compactFurnitureDefinition(small, "lanshan_autumn_field:small_crop_streamer");
-  assert.equal(compactLarge.definition.template, compactSmall.definition.template);
-  const templates: JsonObject = {};
-  mergeFurnitureTemplates(templates, compactLarge.templates);
-  mergeFurnitureTemplates(templates, compactSmall.templates);
-  const expandedLarge = expandCraftEngineTemplateEntry(compactLarge.definition, templates, "lanshan_autumn_field:large_crop_streamer");
-  const expandedSmall = expandCraftEngineTemplateEntry(compactSmall.definition, templates, "lanshan_autumn_field:small_crop_streamer");
-  assert.equal((expandedLarge.settings as JsonObject).item, "lanshan_autumn_field:large_crop_streamer");
-  assert.equal((expandedSmall.settings as JsonObject).item, "lanshan_autumn_field:small_crop_streamer");
+  assert.equal((large.settings as JsonObject).item, "lanshan_autumn_field:large_crop_streamer");
+  assert.equal((small.settings as JsonObject).item, "lanshan_autumn_field:small_crop_streamer");
 });
 
 test("Autumn ceiling lantern keeps Nexo's separate visual, Barrier, and light anchors", () => {
@@ -739,123 +849,29 @@ test("Autumn ceiling lantern keeps Nexo's separate visual, Barrier, and light an
     { position: element.position, pitch: element.pitch, yaw: element.yaw, rotation: element.rotation, displayTransform: element.display_transform },
     { position: "0,-0.01,0", pitch: -90, yaw: undefined, rotation: "0,1,0,0", displayTransform: "fixed" },
   );
-  assert.deepEqual(
-    { type: barrier.type, position: barrier.position, scale: barrier.scale, peek: barrier.peek },
-    { type: "shulker", position: "0,-1,0", scale: 1, peek: 0 },
-  );
-  const glowing = (converted.furniture!.behaviors as JsonObject[]).find((behavior) => behavior.type === "glowing_furniture")!;
+  assert.deepEqual(barrier, { type: "shulker", position: "0,-1,0", interaction_entity: false });
+  const glowing = (converted.furniture!.behavior as JsonObject[]).find((behavior) => behavior.type === "glowing_furniture")!;
   assert.deepEqual((glowing.variants as JsonObject).ceiling, [{ position: "0,-1.01,0", level: 14 }]);
-  const compacted = compactFurnitureDefinition(converted.furniture!, "lanshan_autumn_field:field_lantern_ceiling");
-  const expanded = expandCraftEngineTemplateEntry(compacted.definition, compacted.templates, "lanshan_autumn_field:field_lantern_ceiling");
-  const expandedElement = ((((expanded.variants as JsonObject).ceiling as JsonObject).elements as JsonObject[])[0])!;
-  assert.deepEqual(
-    { pitch: expandedElement.pitch, yaw: expandedElement.yaw, rotation: expandedElement.rotation },
-    { pitch: -90, yaw: undefined, rotation: "0,1,0,0" },
-  );
   assert.equal(diagnostics.items.length, 0);
 });
 
-test("partial-height placement selects native Barrier grid variants by ray-hit Y", () => {
+test("Barrier furniture keeps one concise base placement without generated voxel profiles", () => {
   const diagnostics = new DiagnosticBag();
   const converted = convertMechanics({ Mechanics: { furniture: {
+    rotatable: false,
     limited_placing: { floor: true, roof: false, wall: false },
     properties: { display_transform: "FIXED", offset_against_blocks: false },
     hitbox: { barriers: ["0,0,0"] },
     seats: ["0,0.6,0"],
-  } } }, "demo:grid", "demo:item/grid", diagnostics, "fixture.yml", "grid");
+  } } }, "demo:concise", "demo:item/concise", diagnostics, "fixture.yml", "concise");
   const variants = converted.furniture!.variants as JsonObject;
-  const profile = variants._nexo_ground_barrier_grid_8 as JsonObject;
-  assert.ok(profile);
-  assert.equal(((profile.hitboxes as JsonObject[])[0]!.position), "0,0.5,0");
-  assert.equal(((profile.elements as JsonObject[])[0]!.position), "0,0.5,0");
-  assert.deepEqual((profile.hitboxes as JsonObject[]).flatMap((hitbox) => hitbox.seats ?? []), ["0,0.6,0"]);
-  const allSeatPositions: string[] = [];
-  for (const variant of Object.values(variants)) {
-    if (!isObject(variant)) continue;
-    const seats = (variant.hitboxes as JsonObject[]).flatMap((hitbox) => Array.isArray(hitbox.seats) ? hitbox.seats as string[] : []);
-    const positions = seats.map((seat) => seat.trim().split(/\s+/u)[0]!);
-    assert.equal(new Set(positions).size, positions.length, "seat positions must be unique inside each active variant");
-    allSeatPositions.push(...positions);
-  }
-  assert.equal(new Set(allSeatPositions).size, allSeatPositions.length, "generated voxel profiles must not repeat literal seat coordinates");
-  const vectorY = (value: unknown): number => Number(String(value ?? "0,0,0").split(",")[1]);
-  for (let sixteenth = 1; sixteenth < 16; sixteenth++) {
-    const shifted = variants["_nexo_ground_barrier_grid_" + sixteenth] as JsonObject;
-    const anchorY = sixteenth / 16;
-    const elementY = vectorY((shifted.elements as JsonObject[])[0]!.position);
-    const barrierY = vectorY((shifted.hitboxes as JsonObject[])[0]!.position);
-    const seat = (shifted.hitboxes as JsonObject[]).flatMap((hitbox) => hitbox.seats ?? [])[0];
-    assert.ok(Math.abs(anchorY + elementY - 1) < 1e-8);
-    assert.ok(Math.abs(anchorY + barrierY - 1) < 1e-8);
-    assert.ok(Math.abs(anchorY + vectorY(String(seat).split(/\s+/u)[0]) - 1.1) < 1e-8);
-  }
-  const events = converted.furniture!.events as JsonObject[];
-  assert.equal(events[0]!.on, "place");
-  const functions = events[0]!.functions as JsonObject[];
-  assert.equal(functions.length, 15);
-  assert.equal(functions[7]!.variant, "_nexo_ground_barrier_grid_8");
-  assert.equal((((functions[7]!.conditions as JsonObject[])[1]!.expression)),
-    "ABS((<arg:position.y>-FLOOR(<arg:position.y>))-0.5)<0.00001");
-  assert.equal(diagnostics.items.some((entry) => entry.code.includes("PARTIAL_BLOCK")), false);
-});
-
-test("native CE templates compact furniture families and expand to shifted geometry, seats, lights, and events", () => {
-  const source: JsonObject = { Mechanics: { furniture: {
-    limited_placing: { floor: true, roof: false, wall: false },
-    properties: { display_transform: "FIXED" },
-    hitbox: { barriers: ["0,0,0"] },
-    seats: ["0,0.6,0"],
-    lights: { toggleable: true, lights: ["0,1,0 14"] },
-  } } };
-  const diagnostics = new DiagnosticBag();
-  const first = convertMechanics(source, "demo:lamp_a", "demo:item/lamp_a", diagnostics, "fixture.yml", "lamp_a").furniture!;
-  const second = convertMechanics(source, "demo:lamp_b", "demo:item/lamp_b", diagnostics, "fixture.yml", "lamp_b").furniture!;
-  const compactA = compactFurnitureDefinition(first, "demo:lamp_a");
-  const compactB = compactFurnitureDefinition(second, "demo:lamp_b");
-  assert.deepEqual(Object.keys(compactA.definition), ["template"]);
-  assert.equal(compactA.definition.template, compactB.definition.template, "identical families must share one target-neutral template");
-  const mergedTemplates: JsonObject = {};
-  mergeFurnitureTemplates(mergedTemplates, compactA.templates);
-  const beforeMerge = Object.keys(mergedTemplates).length;
-  mergeFurnitureTemplates(mergedTemplates, compactB.templates);
-  assert.equal(Object.keys(mergedTemplates).length, beforeMerge, "identical geometry must not duplicate generated templates");
-  assert.ok(beforeMerge < 20, "the fixed 15-profile boilerplate should be interned instead of copied per furniture");
-  const concreteBytes = Buffer.byteLength(stringify({ furniture: { "demo:lamp_a": first, "demo:lamp_b": second } }));
-  const compactBytes = Buffer.byteLength(stringify({
-    templates: mergedTemplates,
-    furniture: { "demo:lamp_a": compactA.definition, "demo:lamp_b": compactB.definition },
-  }));
-  assert.ok(compactBytes < concreteBytes * 0.45, "native templates should remove most repeated serialized YAML");
-
-  const expanded = expandCraftEngineTemplateEntry(compactA.definition, mergedTemplates, "demo:lamp_a");
-  assert.equal(((expanded.settings as JsonObject).item), "demo:lamp_a");
-  assert.equal((((((expanded.loot as JsonObject).pools as JsonObject[])[0]!.entries as JsonObject[])[0]!.item)), "demo:lamp_a");
-  const expandedB = expandCraftEngineTemplateEntry(compactB.definition, mergedTemplates, "demo:lamp_b");
-  assert.equal(((expandedB.settings as JsonObject).item), "demo:lamp_b");
-  assert.equal((((((expandedB.loot as JsonObject).pools as JsonObject[])[0]!.entries as JsonObject[])[0]!.item)), "demo:lamp_b");
-  const concreteVariants = first.variants as JsonObject;
-  const expandedVariants = expanded.variants as JsonObject;
-  assert.equal(Object.keys(expandedVariants).length, 32);
-  assert.deepEqual(expandedVariants._nexo_ground_barrier_grid_8, concreteVariants._nexo_ground_barrier_grid_8);
-  assert.deepEqual(expandedVariants._nexo_ground_barrier_grid_8_unlit, concreteVariants._nexo_ground_barrier_grid_8_unlit);
-
-  const concreteBehavior = (first.behaviors as JsonObject[])[0]!;
-  const expandedBehavior = (expanded.behaviors as JsonObject[])[0]!;
-  const concreteLights = concreteBehavior.variants as JsonObject;
-  const expandedLights = expandedBehavior.variants as JsonObject;
-  assert.deepEqual(expandedLights._nexo_ground_barrier_grid_8, concreteLights._nexo_ground_barrier_grid_8);
-  assert.deepEqual(expandedLights._nexo_ground_barrier_grid_8, [{ position: "0,1.5,0", level: 14 }]);
-  assert.equal(expandedLights._nexo_ground_barrier_grid_8_unlit, undefined);
-
-  const events = expanded.events as JsonObject[];
-  const placeFunctions = events.find((event) => event.on === "place")!.functions as JsonObject[];
-  assert.equal(placeFunctions.length, 15);
-  assert.equal(placeFunctions[7]!.variant, "_nexo_ground_barrier_grid_8");
-  const clickFunctions = events.find((event) => event.on === "right_click")!.functions as JsonObject[];
-  const cases = clickFunctions[0]!.cases as JsonObject[];
-  assert.equal(cases.length, 32);
-  assert.equal(clickFunctions[1]!.type, "update_interaction_tick");
-  assert.equal(diagnostics.items.length, 0);
+  assert.deepEqual(Object.keys(variants), ["ground"]);
+  const ground = variants.ground as JsonObject;
+  assert.equal(((ground.hitboxes as JsonObject[])[0]!.position), "0,0,0");
+  assert.deepEqual(((ground.hitboxes as JsonObject[])[0]!.seats), ["0,0,0"]);
+  assert.equal(converted.furniture!.events, undefined);
+  assert.equal(JSON.stringify(converted.furniture).includes("_nexo_"), false);
+  assert.equal(JSON.stringify(converted.furniture).includes("<arg:position.y>"), false);
 });
 
 test("Pack.generate_model is matched silently because Nexo does not parse it as the decision key", () => {
@@ -876,16 +892,13 @@ test("shulker normalized length uses CE sine-squared inverse, not linear interpo
   assert.equal(hitbox.direction, "down");
 });
 
-test("barrier mapping is a silently supported exact native hard AABB", () => {
+test("barrier mapping uses CE defaults without verbose hitbox boilerplate", () => {
   const diagnostics = new DiagnosticBag();
   const config: JsonObject = { Mechanics: { furniture: { hitbox: { barriers: ["0,0,0"] } } } };
   const converted = convertMechanics(config, "demo:x", "demo:item/x", diagnostics, "fixture.yml", "x");
   const ground = (converted.furniture!.variants as JsonObject).ground as JsonObject;
   const hitbox = (ground.hitboxes as JsonObject[])[0]!;
-  assert.deepEqual(
-    { type: hitbox.type, scale: hitbox.scale, peek: hitbox.peek, direction: hitbox.direction, blocksBuilding: hitbox.blocks_building, projectiles: hitbox.can_be_hit_by_projectile },
-    { type: "shulker", scale: 1, peek: 0, direction: "up", blocksBuilding: true, projectiles: true },
-  );
+  assert.deepEqual(hitbox, { type: "shulker", position: "0,0.5,0", interaction_entity: false });
   assert.equal(diagnostics.items.some((entry) => entry.code.includes("BARRIER") && entry.field?.includes("hitbox.barriers")), false);
 });
 
@@ -1033,7 +1046,7 @@ test("ambiguous near-match models are never guessed", async () => {
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
-test("end-to-end globals drive rotation and converted NoteBlock support profiles", async () => {
+test("end-to-end globals drive rotation with concise furniture variants", async () => {
   const temp = await mkdtemp(join(tmpdir(), "nexo2ce-globals-"));
   const input = join(temp, "Nexo");
   const output = join(temp, "CraftEnginePack");
@@ -1042,6 +1055,17 @@ test("end-to-end globals drive rotation and converted NoteBlock support profiles
     await mkdir(join(input, "pack", "assets"), { recursive: true });
     await writeFile(join(input, "mechanics.yml"), "furniture:\n  default_rotatable_on_sneak: true\n", "utf8");
     await writeFile(join(input, "settings.yml"), "Furniture:\n  allowed_gamemodes_for_rotation:\n    - ADVENTURE\n", "utf8");
+    await writeFile(join(input, "inventory.yml"), [
+      "NexoInventory:",
+      "  type: FILE",
+      "  menu_title: '<glyph:not_used_by_categories>'",
+      "  layout:",
+      "    demo:",
+      "      itemname: '<aqua>Demo Items</aqua>'",
+      "      icon: turning",
+      "      slot: 4",
+      "",
+    ].join("\n"), "utf8");
     await writeFile(join(input, "items", "demo.yml"), [
       "support:",
       "  material: PAPER",
@@ -1066,21 +1090,35 @@ test("end-to-end globals drive rotation and converted NoteBlock support profiles
       "      hitbox:",
       "        interactions:",
       "          - '0,0,0 1,1'",
+      "      lights:",
+      "        lights:",
+      "          - '0,1,0 14'",
       "",
     ].join("\n"), "utf8");
     const result = await convert({ input, output, namespace: "demo", clientMode: "modern", cmdPolicy: "preserve", strict: true, force: false, audit: false });
     assert.equal(result.success, true, result.diagnostics.formatLines().join("\n"));
-    const yaml = parse(await readFile(join(output, "configuration", "furniture.yml"), "utf8")) as JsonObject;
-    const templateYaml = parse(await readFile(join(output, "configuration", "furniture-templates.yml"), "utf8")) as JsonObject;
-    const furnitureEntry = (yaml.furniture as JsonObject)["demo:turning"] as JsonObject;
-    assert.deepEqual(Object.keys(furnitureEntry), ["template"]);
-    const furniture = expandCraftEngineTemplateEntry(
-      furnitureEntry, templateYaml.templates as JsonObject, "demo:turning",
-    );
+    assert.equal(result.categoryCount, 1);
+    const categoryYaml = parse(await readFile(join(output, "configuration", "categories.yml"), "utf8")) as JsonObject;
+    assert.deepEqual((categoryYaml.categories as JsonObject)["demo:demo"], {
+      name: "<!i><green><aqua>Demo Items</aqua></green>",
+      icon: "demo:turning",
+      priority: 3,
+      list: ["demo:support", "demo:turning"],
+    });
+    const furnitureText = await readFile(join(output, "configuration", "furniture.yml"), "utf8");
+    const yaml = parse(furnitureText) as JsonObject;
+    await assert.rejects(readFile(join(output, "configuration", "furniture-templates.yml"), "utf8"));
+    assert.doesNotMatch(furnitureText, /_nexo2ce\/furniture\/variant-shift|__nexo2ce_|\$\{/u);
+    const furniture = (yaml.furniture as JsonObject)["demo:turning"] as JsonObject;
+    assert.equal(furniture.template, undefined);
+    assert.equal((furniture.settings as JsonObject).item, "demo:turning");
+    assert.equal(furniture.behaviors, undefined);
+    const behavior = (furniture.behavior as JsonObject[])[0]!;
+    assert.equal(behavior.type, "glowing_furniture");
+    assert.deepEqual(Object.keys(furniture.variants as JsonObject), ["wall"]);
+    assert.doesNotMatch(furnitureText, /_nexo_(?:ground|ceiling)_barrier_grid|_nexo_wall_supported|<arg:position\.y>/u);
     const events = furniture.events as JsonObject[];
-    const place = events.find((entry) => entry.on === "place")!;
-    const matchBlock = ((((place.functions as JsonObject[])[0]!.conditions as JsonObject[])[2]))!;
-    assert.ok((matchBlock.blocks as string[]).includes("demo:support"));
+    assert.equal(events.some((entry) => entry.on === "place"), false);
     const click = events.find((entry) => entry.on === "right_click")!;
     const rotate = (click.functions as JsonObject[]).find((entry) => entry.type === "rotate_furniture")!;
     const conditions = rotate.conditions as JsonObject[];
