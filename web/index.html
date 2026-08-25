@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <meta name="description" content="本地 Nexo 1.26 到 CraftEngine 26.8 语义转换器">
-  <title>Nexo → CraftEngine 本地转换器</title>
+  <title>Nexo → CraftEngine 语义转换器</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/vendor/fflate.js" defer></script>
   <script type="module" src="/app.js"></script>
@@ -13,50 +13,96 @@
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
   <div class="ambient ambient-two" aria-hidden="true"></div>
+  <div class="ambient ambient-three" aria-hidden="true"></div>
+
   <header class="topbar">
     <a class="brand" href="/" aria-label="Nexo 转 CraftEngine 首页">
-      <span class="brand-mark" aria-hidden="true">N</span>
-      <span>Nexo<span class="brand-arrow">→</span>CraftEngine</span>
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m13 2-2 2.5-3-1.5-1 3.5-3 .5 1.5 3-2 2.5 3 2-.5 3.5 3.5.5 1.5 3 2.5-2 2.5 2 1.5-3 3.5-.5-.5-3.5 3-2-2-2.5 1.5-3-3-.5-1-3.5-3 1.5z"/>
+          <path d="M10 10v4l4-2z" fill="currentColor"/>
+        </svg>
+      </span>
+      <span class="brand-title">Nexo<span class="brand-arrow">→</span>CraftEngine</span>
+      <span class="version-pill">26.8 / 1.21.11</span>
     </a>
-    <div class="local-badge"><span class="pulse-dot" aria-hidden="true"></span>仅在本机运行 · 127.0.0.1</div>
+    <div class="topbar-actions">
+      <div class="local-badge" title="数据仅在本机处理，绝不上云">
+        <span class="pulse-dot" aria-hidden="true"></span>
+        <span>本机独立运行 · 127.0.0.1</span>
+      </div>
+    </div>
   </header>
 
   <main class="shell">
     <section class="hero" aria-labelledby="page-title">
-      <p class="eyebrow">SEMANTICS-AWARE MIGRATION</p>
-      <h1 id="page-title">把 Nexo 包转换为<br><span>CraftEngine 包</span></h1>
-      <p class="hero-copy">选择完整的 Nexo 文件夹或 ZIP。转换器会自动寻找 Nexo 根目录，按 Minecraft 1.21.11 客户端语义转换，并生成可下载的 CraftEngine ZIP。</p>
+      <div class="hero-badge">
+        <span class="badge-icon">⚡</span>
+        <span class="eyebrow">SEMANTICS-AWARE MIGRATION ENGINE</span>
+      </div>
+      <h1 id="page-title">把 Nexo 资源包转换为<br><span class="gradient-text">CraftEngine 标准包</span></h1>
+      <p class="hero-copy">自动识别多层级 Nexo 根目录，安全展开 16 类 Data Components，生成包含分类目录、紧凑家具变体与资源图审计的高保真 CraftEngine 26.8 结构。</p>
     </section>
 
-    <ol class="stepper" aria-label="转换步骤">
-      <li class="step is-active" data-step="select"><span>1</span><strong>选择来源</strong></li>
-      <li class="step" data-step="configure"><span>2</span><strong>配置选项</strong></li>
-      <li class="step" data-step="convert"><span>3</span><strong>执行转换</strong></li>
-      <li class="step" data-step="download"><span>4</span><strong>下载结果</strong></li>
-    </ol>
+    <nav aria-label="转换流程导航">
+      <ol class="stepper">
+        <li class="step is-active" data-step="select">
+          <span class="step-num"><span class="num-text">1</span></span>
+          <div class="step-info"><strong>选择来源</strong><small>ZIP 或 文件夹</small></div>
+        </li>
+        <li class="step" data-step="configure">
+          <span class="step-num"><span class="num-text">2</span></span>
+          <div class="step-info"><strong>配置选项</strong><small>模式与审计策略</small></div>
+        </li>
+        <li class="step" data-step="convert">
+          <span class="step-num"><span class="num-text">3</span></span>
+          <div class="step-info"><strong>语义转换</strong><small>本地极速解析</small></div>
+        </li>
+        <li class="step" data-step="download">
+          <span class="step-num"><span class="num-text">4</span></span>
+          <div class="step-info"><strong>下载结果</strong><small>ZIP 与审计报告</small></div>
+        </li>
+      </ol>
+    </nav>
 
+    <!-- 01: INPUT PANEL -->
     <section class="panel input-panel" aria-labelledby="input-title">
       <div class="panel-heading">
         <div>
           <p class="section-index">01 / INPUT</p>
           <h2 id="input-title">选择 Nexo 来源</h2>
         </div>
-        <button id="changeInputButton" class="text-button is-hidden" type="button">更换来源</button>
+        <button id="changeInputButton" class="text-button is-hidden" type="button" aria-label="重新选择输入文件">
+          <span aria-hidden="true">↺</span> 更换来源
+        </button>
       </div>
 
       <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-describedby="drop-help">
         <div class="drop-icon" aria-hidden="true">
-          <svg viewBox="0 0 48 48" role="img"><path d="M24 7v24m0-24-8 8m8-8 8 8M10 29v7a5 5 0 0 0 5 5h18a5 5 0 0 0 5-5v-7"/></svg>
+          <svg viewBox="0 0 48 48" role="img">
+            <path d="M24 6v26m0-26-8 8m8-8 8 8M8 30v7a5 5 0 0 0 5 5h22a5 5 0 0 0 5-5v-7"/>
+          </svg>
         </div>
-        <h3>拖入 Nexo 文件夹或 ZIP</h3>
-        <p id="drop-help">需要包含 items/ 或 item/；请同时提供资源包 assets。</p>
+        <h3>拖入 Nexo 文件夹或 ZIP 压缩包</h3>
+        <p id="drop-help">包含 <code>items/</code> 或 <code>item/</code>；可同时附带 <code>pack/assets/</code> 材质模型</p>
         <div class="picker-actions">
           <button id="chooseFolderButton" class="primary-button" type="button">
-            <span aria-hidden="true">▣</span>选择文件夹
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
+              <path d="M2 6a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6z"/>
+            </svg>
+            <span>选择文件夹</span>
           </button>
           <button id="chooseZipButton" class="secondary-button" type="button">
-            <span aria-hidden="true">◇</span>选择 ZIP
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M4 4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4zm5 1h2v2H9V5zm0 3h2v2H9V8zm0 3h2v2H9v-2zm-2 4h6v1H7v-1z" clip-rule="evenodd"/>
+            </svg>
+            <span>选择 ZIP</span>
           </button>
+        </div>
+        <div class="drop-hint-tags">
+          <span class="hint-tag">支持 Ctrl+V 粘贴</span>
+          <span class="hint-tag">自动解压与多层级探查</span>
+          <span class="hint-tag">零网络传输</span>
         </div>
         <input id="folderInput" class="visually-hidden" type="file" webkitdirectory directory multiple>
         <input id="zipInput" class="visually-hidden" type="file" accept=".zip,application/zip">
@@ -65,63 +111,105 @@
       <div id="inputSummary" class="input-summary is-hidden" aria-live="polite">
         <div id="sourceIcon" class="source-icon" aria-hidden="true">ZIP</div>
         <div class="source-main">
-          <strong id="sourceName">—</strong>
+          <div class="source-name-row">
+            <strong id="sourceName">—</strong>
+            <span class="source-ready-tag">已就绪</span>
+          </div>
           <span id="sourceDetail">—</span>
         </div>
         <div class="source-metrics">
-          <span><b id="sourceFiles">0</b> 文件</span>
-          <span><b id="sourceSize">0 B</b> 原始大小</span>
+          <div class="metric-chip">
+            <span class="metric-label">包含文件</span>
+            <b id="sourceFiles">0</b>
+          </div>
+          <div class="metric-chip">
+            <span class="metric-label">原始大小</span>
+            <b id="sourceSize">0 B</b>
+          </div>
         </div>
         <div id="detectionLine" class="detection-line"></div>
       </div>
       <p id="inputError" class="field-error is-hidden" role="alert"></p>
     </section>
 
+    <!-- 02: OPTIONS PANEL -->
     <section id="optionsPanel" class="panel options-panel" aria-labelledby="options-title">
       <div class="panel-heading">
         <div>
           <p class="section-index">02 / OPTIONS</p>
-          <h2 id="options-title">转换选项</h2>
+          <h2 id="options-title">转换与兼容选项</h2>
         </div>
-        <span class="defaults-chip">已使用安全默认值</span>
+        <span class="defaults-chip">
+          <span class="chip-dot" aria-hidden="true"></span>
+          已使用安全默认值
+        </span>
       </div>
 
       <fieldset id="optionsFieldset">
         <legend class="visually-hidden">CraftEngine 转换选项</legend>
         <div class="options-grid">
           <div class="field namespace-field">
-            <span class="field-label">命名空间</span>
-            <div class="namespace-auto"><b>自动识别</b><code>读取作者原包</code></div>
-            <small>优先读取作者在原包结构和配置文件中使用的命名空间，例如 lanshan_chinese_2；无需手动填写</small>
+            <span class="field-label">
+              <span>命名空间 (Namespace)</span>
+              <span class="field-badge">推荐自动</span>
+            </span>
+            <div class="namespace-auto">
+              <div class="namespace-text">
+                <b>自动识别</b>
+                <code>读取作者原包</code>
+              </div>
+              <span class="namespace-status-icon" aria-hidden="true">✓</span>
+            </div>
+            <small>优先解析原包声明与文件名（如 <code>lanshan_autumn_field</code>），避免命名冲突与手动配置错误</small>
           </div>
 
-          <label class="field" for="clientModeSelect">
-            <span class="field-label">客户端模式</span>
-            <select id="clientModeSelect">
-              <option value="hybrid" selected>Hybrid · 现代 + 传统</option>
-              <option value="modern">Modern · 1.21.4+</option>
-              <option value="legacy">Legacy · 传统 CMD</option>
-            </select>
-            <small>控制 ItemModel 和 CMD fallback 的生成方式</small>
-          </label>
+          <div class="field">
+            <label class="field-label" for="clientModeSelect">
+              <span>客户端模式 (Client Mode)</span>
+            </label>
+            <div class="custom-select-wrapper">
+              <select id="clientModeSelect">
+                <option value="hybrid" selected>Hybrid · 混合模式 (现代 ItemModel + 传统 CMD)</option>
+                <option value="modern">Modern · 现代模式 (针对 1.21.4+ 客户端)</option>
+                <option value="legacy">Legacy · 传统模式 (仅生成 CustomModelData 树)</option>
+              </select>
+            </div>
+            <small>控制生成的物品模型是现代 1.21.4+ ItemModel 还是传统 CMD 回退</small>
+          </div>
 
-          <label class="field" for="cmdPolicySelect">
-            <span class="field-label">CMD 策略</span>
-            <select id="cmdPolicySelect">
-              <option value="preserve" selected>Preserve · 只保留明确值</option>
-              <option value="allocate">Allocate · 重建缺失值</option>
-              <option value="omit">Omit · 不输出 CMD</option>
-            </select>
-            <small>Allocate 仅适合已经收集全部物品配置的包</small>
-          </label>
+          <div class="field">
+            <label class="field-label" for="cmdPolicySelect">
+              <span>CMD 策略 (CustomModelData)</span>
+            </label>
+            <div class="custom-select-wrapper">
+              <select id="cmdPolicySelect">
+                <option value="preserve" selected>Preserve · 保留明确值 (严格保持原包一致)</option>
+                <option value="allocate">Allocate · 自动分配缺失 (仅限完整全量包)</option>
+                <option value="omit">Omit · 完全省略 (纯现代纯粹输出)</option>
+              </select>
+            </div>
+            <small>决定对缺失或自定义数字 CMD 的继承和分配行为</small>
+          </div>
 
           <div class="toggle-stack">
             <label class="toggle-row" for="auditInput">
-              <span><strong>资源图审计</strong><small>检查模型、纹理和 blueprint 引用</small></span>
+              <div class="toggle-content">
+                <div class="toggle-title-row">
+                  <strong>资源图完整性审计</strong>
+                  <span class="toggle-badge">推荐开启</span>
+                </div>
+                <small>全面检查物品模型、方块模型、纹理贴图及 Blueprint 蓝图引用完整性</small>
+              </div>
               <input id="auditInput" type="checkbox" checked><i aria-hidden="true"></i>
             </label>
             <label class="toggle-row" for="strictInput">
-              <span><strong>严格模式</strong><small>遇到任何有损映射就标记失败</small></span>
+              <div class="toggle-content">
+                <div class="toggle-title-row">
+                  <strong>严格模式 (Strict Mode)</strong>
+                  <span class="toggle-badge muted-badge">可选</span>
+                </div>
+                <small>遇到任何需人工调整的有损映射（如未展开的动态实体引用）即终止生成</small>
+              </div>
               <input id="strictInput" type="checkbox"><i aria-hidden="true"></i>
             </label>
           </div>
@@ -129,92 +217,193 @@
       </fieldset>
     </section>
 
+    <!-- STICKY ACTION BAR -->
     <section id="actionBar" class="action-bar" aria-label="转换操作">
-      <div>
-        <strong id="readyTitle">等待选择 Nexo 包</strong>
-        <span id="readyDetail">文件只会发送到本机转换服务</span>
+      <div class="action-status-col">
+        <div class="action-title-row">
+          <span class="status-indicator-dot" aria-hidden="true"></span>
+          <strong id="readyTitle">等待选择 Nexo 包</strong>
+        </div>
+        <span id="readyDetail">所有处理均在当前浏览器与本机后台执行，无远程上传</span>
       </div>
       <div class="action-buttons">
-        <button id="clearButton" class="ghost-button" type="button" disabled>清除</button>
-        <button id="convertButton" class="convert-button" type="button" disabled>
-          <span>开始转换</span><b aria-hidden="true">→</b>
+        <button id="clearButton" class="ghost-button" type="button" disabled title="清除当前选择与输出">
+          <span>清除</span>
+        </button>
+        <button id="convertButton" class="convert-button" type="button" disabled title="快捷键: Ctrl + Enter">
+          <span class="convert-btn-text">开始转换</span>
+          <span class="shortcut-pill" aria-hidden="true">Ctrl ↵</span>
+          <b class="convert-btn-arrow" aria-hidden="true">→</b>
         </button>
       </div>
     </section>
 
+    <!-- 03: PROGRESS PANEL -->
     <section id="progressPanel" class="panel progress-panel is-hidden" aria-labelledby="progress-title">
       <div class="panel-heading">
         <div>
           <p class="section-index">03 / CONVERT</p>
-          <h2 id="progress-title">正在转换</h2>
+          <h2 id="progress-title">正在执行转换与审计</h2>
         </div>
-        <span id="elapsedTime" class="elapsed">00:00</span>
+        <div class="elapsed-badge">
+          <span class="timer-icon" aria-hidden="true">⏱</span>
+          <span id="elapsedTime" class="elapsed">00:00</span>
+        </div>
       </div>
       <div class="progress-list">
         <div id="packageRow" class="progress-row">
           <span class="phase-icon" aria-hidden="true">1</span>
-          <div><strong>打包来源</strong><small id="packageText">等待</small></div>
-          <progress id="packageProgress" max="100" value="0" aria-label="打包来源进度"></progress>
+          <div class="phase-info">
+            <strong>打包来源</strong>
+            <small id="packageText">等待处理</small>
+          </div>
+          <div class="progress-bar-wrap">
+            <progress id="packageProgress" max="100" value="0" aria-label="打包来源进度"></progress>
+          </div>
         </div>
         <div id="uploadRow" class="progress-row">
           <span class="phase-icon" aria-hidden="true">2</span>
-          <div><strong>上传到本机</strong><small id="uploadText">等待</small></div>
-          <progress id="uploadProgress" max="100" value="0" aria-label="本机上传进度"></progress>
+          <div class="phase-info">
+            <strong>传输至转换引擎</strong>
+            <small id="uploadText">等待处理</small>
+          </div>
+          <div class="progress-bar-wrap">
+            <progress id="uploadProgress" max="100" value="0" aria-label="传输进度"></progress>
+          </div>
         </div>
         <div id="convertRow" class="progress-row">
           <span class="phase-icon" aria-hidden="true">3</span>
-          <div><strong>语义转换与审计</strong><small id="convertText">等待</small></div>
-          <progress id="convertProgress" max="100" value="0" aria-label="转换进度"></progress>
+          <div class="phase-info">
+            <strong>语义转换与资源图审计</strong>
+            <small id="convertText">等待处理</small>
+          </div>
+          <div class="progress-bar-wrap">
+            <progress id="convertProgress" max="100" value="0" aria-label="转换与审计进度"></progress>
+          </div>
         </div>
         <div id="downloadRow" class="progress-row">
           <span class="phase-icon" aria-hidden="true">4</span>
-          <div><strong>接收结果</strong><small id="downloadText">等待</small></div>
-          <progress id="downloadProgress" max="100" value="0" aria-label="结果下载进度"></progress>
+          <div class="phase-info">
+            <strong>组装 CraftEngine 压缩包</strong>
+            <small id="downloadText">等待处理</small>
+          </div>
+          <div class="progress-bar-wrap">
+            <progress id="downloadProgress" max="100" value="0" aria-label="结果组装进度"></progress>
+          </div>
         </div>
       </div>
       <div class="progress-footer">
-        <p id="liveStatus" role="status" aria-live="polite">准备转换…</p>
-        <button id="cancelButton" class="text-button danger-text" type="button">取消</button>
+        <div class="live-status-wrap">
+          <span class="spinner-dot" aria-hidden="true"></span>
+          <p id="liveStatus" role="status" aria-live="polite">准备转换…</p>
+        </div>
+        <button id="cancelButton" class="text-button danger-text" type="button">取消任务</button>
       </div>
     </section>
 
+    <!-- 04: RESULT PANEL -->
     <section id="resultPanel" class="panel result-panel is-hidden" aria-labelledby="result-title">
       <div id="resultBanner" class="result-banner">
         <div id="resultMark" class="result-mark" aria-hidden="true">✓</div>
-        <div>
+        <div class="result-banner-content">
           <p id="resultEyebrow" class="section-index">04 / COMPLETE</p>
           <h2 id="result-title" tabindex="-1">转换完成</h2>
-          <p id="resultMessage">CraftEngine ZIP 已经准备好。</p>
+          <p id="resultMessage">CraftEngine 26.8 结构 ZIP 已经准备好。</p>
         </div>
-        <button id="downloadButton" class="download-button" type="button">下载 CraftEngine ZIP <span aria-hidden="true">↓</span></button>
+        <div class="result-banner-actions">
+          <button id="downloadButton" class="download-button" type="button">
+            <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M3 17a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H4a1 1 0 0 1-1-1zm3.293-7.707a1 1 0 0 1 1.414 0L9 10.586V3a1 1 0 1 1 2 0v7.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3a1 1 0 0 1 0-1.414z" clip-rule="evenodd"/>
+            </svg>
+            <span>下载 CraftEngine ZIP</span>
+          </button>
+        </div>
       </div>
 
-      <div id="resultStats" class="stats-grid" aria-label="转换统计"></div>
+      <div class="stats-section">
+        <h3 class="stats-heading">转换内容概览</h3>
+        <div id="resultStats" class="stats-grid" aria-label="转换统计"></div>
+      </div>
 
       <div class="result-columns">
         <section class="audit-card" aria-labelledby="audit-title">
-          <div class="subheading"><h3 id="audit-title">资源审计</h3><span id="auditBadge">—</span></div>
+          <div class="subheading">
+            <div class="subheading-left">
+              <span class="subheading-icon">🔍</span>
+              <h3 id="audit-title">资源图完整性审计</h3>
+            </div>
+            <span id="auditBadge" class="status-pill">—</span>
+          </div>
           <dl id="auditSummary"></dl>
         </section>
         <section class="diagnostic-card" aria-labelledby="diagnostic-title">
-          <div class="subheading"><h3 id="diagnostic-title">诊断摘要</h3><span id="diagnosticBadge">0</span></div>
+          <div class="subheading">
+            <div class="subheading-left">
+              <span class="subheading-icon">📋</span>
+              <h3 id="diagnostic-title">诊断与兼容性分析</h3>
+            </div>
+            <span id="diagnosticBadge" class="status-pill">0</span>
+          </div>
           <div id="diagnosticSummary" class="diagnostic-summary"></div>
         </section>
       </div>
 
       <details id="diagnosticDetails" class="diagnostic-details">
-        <summary>查看全部诊断 <span id="diagnosticCount">0</span></summary>
+        <summary class="diagnostic-summary-toggle">
+          <div class="summary-left">
+            <span class="toggle-arrow" aria-hidden="true">▶</span>
+            <span>查看详细诊断记录</span>
+            <span id="diagnosticCount" class="count-badge">0</span>
+          </div>
+          <div class="summary-right" onclick="event.stopPropagation()">
+            <button id="copyDiagnosticsButton" class="ghost-mini-button" type="button" title="复制诊断记录为 Markdown 文本">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <path d="M7 3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7.414A2 2 0 0 0 14.414 6L12 3.586A2 2 0 0 0 10.586 3H7z"/>
+                <path d="M5 7a1 1 0 0 1 1-1h1v1.5A1.5 1.5 0 0 0 8.5 9H10v1H6a1 1 0 0 1-1-1V7z"/>
+              </svg>
+              <span>复制诊断报告</span>
+            </button>
+          </div>
+        </summary>
+        <div class="diagnostic-toolbar">
+          <div class="filter-tabs" role="tablist" aria-label="诊断过滤">
+            <button class="filter-tab is-active" type="button" data-filter="all">全部</button>
+            <button class="filter-tab" type="button" data-filter="error">错误</button>
+            <button class="filter-tab" type="button" data-filter="warning">警告</button>
+            <button class="filter-tab" type="button" data-filter="lossy">有损映射</button>
+          </div>
+          <div class="search-box">
+            <input id="diagnosticSearch" type="search" placeholder="搜索物品 ID、代码或字段..." aria-label="搜索诊断">
+          </div>
+        </div>
         <div id="diagnosticList" class="diagnostic-list"></div>
       </details>
+
       <div class="result-footer">
-        <p>ZIP 内包含 conversion-report.json 和 migration-mapping.yml。</p>
-        <button id="convertAnotherButton" class="secondary-button" type="button">转换另一个包</button>
+        <div class="footer-tip">
+          <span class="tip-icon">💡</span>
+          <span>解压到服务端 <code>plugins/CraftEngine/</code> 即可直接生效；已内置 <code>conversion-report.json</code> 与 <code>migration-mapping.yml</code></span>
+        </div>
+        <button id="convertAnotherButton" class="secondary-button" type="button">
+          <span>转换另一个包</span>
+          <span aria-hidden="true">↺</span>
+        </button>
       </div>
     </section>
   </main>
 
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
   <footer>
-    <span>Nexo 1.26</span><i aria-hidden="true"></i><span>CraftEngine 26.8</span><i aria-hidden="true"></i><span>Minecraft 1.21.11 semantics</span>
+    <div class="footer-inner">
+      <span>Nexo 1.26</span>
+      <i aria-hidden="true"></i>
+      <span>CraftEngine 26.8</span>
+      <i aria-hidden="true"></i>
+      <span>Minecraft 1.21.11 Codec</span>
+      <i aria-hidden="true"></i>
+      <span>16 类 Builder Components 官方展开</span>
+    </div>
   </footer>
 </body>
 </html>

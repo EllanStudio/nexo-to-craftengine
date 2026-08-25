@@ -8,7 +8,6 @@ import { parse } from "yaml";
 import { DEFAULT_ARCHIVE_LIMITS, WebArchiveError, detectNexoRoot, extractZipArchive } from "../src/web-archive.js";
 import { startWebServer } from "../src/web-server.js";
 import type { JsonObject } from "../src/types.js";
-import { expandCraftEngineTemplateEntry } from "./craftengine-template-expander.js";
 
 function archiveBuffer(files: Record<string, string>): Uint8Array {
   return zipSync(Object.fromEntries(Object.entries(files).map(([path, value]) => [path, strToU8(value)])), { level: 1 });
@@ -116,8 +115,13 @@ test("local Web API converts a ZIP, sanitizes reports, and returns a CE ZIP", as
     assert.doesNotMatch(pageHtml, /id="namespaceInput"/);
     const client = await fetch(new URL("/app.js", local.url));
     assert.equal(client.status, 200);
+    assert.match(pageHtml, /id="copyDiagnosticsButton"/);
+    assert.match(pageHtml, /id="diagnosticSearch"/);
+    assert.match(pageHtml, /id="toastContainer"/);
     const clientScript = await client.text();
     assert.match(clientScript, /runConversion/);
+    assert.match(clientScript, /copyDiagnosticsButton/);
+    assert.match(clientScript, /filterDiagnosticGroups/);
     assert.doesNotMatch(clientScript, /namespaceInput/);
     const health = await fetch(new URL("/api/health", local.url));
     assert.equal((await health.json() as { ok: boolean }).ok, true);
@@ -173,6 +177,7 @@ test("local Web API converts a ZIP, sanitizes reports, and returns a CE ZIP", as
     assert.equal(response.status, 200, await response.clone().text());
     assert.equal(response.headers.get("content-type"), "application/zip");
     assert.equal(response.headers.get("x-conversion-success"), "true");
+    assert.equal(response.headers.get("x-conversion-categories"), "1");
     assert.equal(response.headers.get("x-conversion-namespace"), "demo");
     assert.equal(response.headers.get("x-conversion-namespace-mode"), "author");
     const output = new Uint8Array(await response.arrayBuffer());
@@ -181,26 +186,27 @@ test("local Web API converts a ZIP, sanitizes reports, and returns a CE ZIP", as
     assert.equal(files["pack.yml"], undefined);
     assert.ok(files[prefix + "pack.yml"]);
     assert.ok(files[prefix + "configuration/items.yml"]);
+    assert.ok(files[prefix + "configuration/categories.yml"]);
     assert.ok(files[prefix + "configuration/furniture.yml"]);
-    assert.ok(files[prefix + "configuration/furniture-templates.yml"]);
+    assert.equal(files[prefix + "configuration/furniture-templates.yml"], undefined);
     assert.ok(files[prefix + "resourcepack/assets/minecraft/models/custom/demo.json"]);
     assert.ok(files[prefix + "migration-mapping.yml"]);
     assert.ok(files[prefix + "conversion-response.json"]);
     const packConfig = parse(strFromU8(files[prefix + "pack.yml"]!)) as { namespace: string };
     const itemConfig = parse(strFromU8(files[prefix + "configuration/items.yml"]!)) as { items: Record<string, { item_model?: string; behavior?: { furniture?: string } }> };
-    const furnitureConfig = parse(strFromU8(files[prefix + "configuration/furniture.yml"]!)) as { furniture: Record<string, JsonObject> };
-    const furnitureTemplates = parse(strFromU8(files[prefix + "configuration/furniture-templates.yml"]!)) as { templates: JsonObject };
+    const categoryConfig = parse(strFromU8(files[prefix + "configuration/categories.yml"]!)) as { categories: Record<string, { list: string[] }> };
+    const furnitureText = strFromU8(files[prefix + "configuration/furniture.yml"]!);
+    const furnitureConfig = parse(furnitureText) as { furniture: Record<string, JsonObject> };
     const mappingConfig = parse(strFromU8(files[prefix + "migration-mapping.yml"]!)) as { items: Record<string, { target: string }> };
     assert.equal(packConfig.namespace, "demo");
     assert.deepEqual(Object.keys(itemConfig.items), ["demo:demo"]);
     assert.equal(itemConfig.items["demo:demo"]?.item_model, "demo:demo");
     assert.equal(itemConfig.items["demo:demo"]?.behavior?.furniture, "demo:demo");
+    assert.deepEqual(categoryConfig.categories["demo:demo"]?.list, ["demo:demo"]);
     assert.deepEqual(Object.keys(furnitureConfig.furniture), ["demo:demo"]);
-    assert.deepEqual(Object.keys(furnitureConfig.furniture["demo:demo"]!), ["template"]);
-    const expandedFurniture = expandCraftEngineTemplateEntry(
-      furnitureConfig.furniture["demo:demo"]!, furnitureTemplates.templates, "demo:demo",
-    );
-    assert.equal((expandedFurniture.settings as JsonObject).item, "demo:demo");
+    assert.equal(furnitureConfig.furniture["demo:demo"]!.template, undefined);
+    assert.equal((furnitureConfig.furniture["demo:demo"]!.settings as JsonObject).item, "demo:demo");
+    assert.doesNotMatch(furnitureText, /_nexo2ce\/furniture\/variant-shift|__nexo2ce_|\$\{/u);
     assert.equal(mappingConfig.items.demo?.target, "demo:demo");
     const reportText = strFromU8(files[prefix + "conversion-report.json"]!);
     const report = JSON.parse(reportText) as {

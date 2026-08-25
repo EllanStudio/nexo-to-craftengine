@@ -1,3 +1,4 @@
+import { convertNexoBuilderComponent } from "./component-builders.js";
 import type { DiagnosticBag } from "./diagnostics.js";
 import { BUKKIT_MATERIALS_1_21_11 } from "./materials-1.21.11.js";
 import { convertModels, readPackModel } from "./models.js";
@@ -172,11 +173,6 @@ const NEXO_COMPONENT_KEYS = new Set([
   "custom_model_data", "tooltip_display", "break_sound", "weapon", "blocks_attacks", "attack_range", "kinetic_weapon", "piercing_weapon",
   "minimum_attack_charge", "swing_animation", "use_effects", "damage_type",
 ]);
-const MANUAL_COMPONENT_KEYS = new Set([
-  "can_place_on", "can_break", "tool", "jukebox_playable", "use_remainder", "death_protection", "consumable", "equippable", "repairable",
-  "weapon", "blocks_attacks", "attack_range", "kinetic_weapon", "piercing_weapon", "swing_animation", "use_effects",
-]);
-
 function bukkitInt(value: JsonValue | undefined): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : 0;
 }
@@ -263,7 +259,7 @@ function convertCustomModelData(raw: JsonObject, diagnostics: DiagnosticBag, sou
   return result;
 }
 
-function mapComponents(components: JsonObject, data: JsonObject, diagnostics: DiagnosticBag, source: string, item: string): string | undefined {
+function mapComponents(components: JsonObject, data: JsonObject, diagnostics: DiagnosticBag, source: string, item: string, material: string): string | undefined {
   const copied: JsonObject = {};
   let itemModel: string | undefined;
   for (const [key, rawValue] of Object.entries(components)) {
@@ -283,8 +279,13 @@ function mapComponents(components: JsonObject, data: JsonObject, diagnostics: Di
       else itemModel = normalizeLocation(rawValue, diagnostics, { source, item, field: "Components.item_model" });
       continue;
     }
-    if (MANUAL_COMPONENT_KEYS.has(key)) {
-      diagnostics.warning("COMPONENT_CODEC_MANUAL", "Nexo's " + key + " builder expands registry/material state into a vanilla component; raw YAML was omitted because CE 26.8 forwards directly to the Minecraft 1.21.11 codec", { source, item, field: "Components." + key, lossy: true });
+    const builder = convertNexoBuilderComponent(key, rawValue, diagnostics, source, item, components, material);
+    if (builder) {
+      if (builder.status === "manual") {
+        diagnostics.warning("COMPONENT_CODEC_MANUAL", "Components." + key + " cannot be resolved statically: " + (builder.reason ?? "runtime registry data is required"), { source, item, field: "Components." + key, lossy: true });
+      } else if (builder.value !== undefined) {
+        copied[key] = builder.value;
+      }
       continue;
     }
     if (key === "custom_data") {
@@ -517,7 +518,7 @@ function convertPersistentData(value: JsonValue | undefined, diagnostics: Diagno
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
-function mapRootData(config: JsonObject, diagnostics: DiagnosticBag, source: string, item: string): { data: JsonObject; componentItemModel?: string } {
+function mapRootData(config: JsonObject, diagnostics: DiagnosticBag, source: string, item: string, material: string): { data: JsonObject; componentItemModel?: string } {
   const data: JsonObject = {};
   if (typeof config.itemname === "string" && config.itemname.length > 0) data.item_name = config.itemname;
   if (typeof config.customname === "string" && config.customname.length > 0) data.custom_name = config.customname;
@@ -553,7 +554,7 @@ function mapRootData(config: JsonObject, diagnostics: DiagnosticBag, source: str
   if (trimPattern) data.trim = { pattern: trimPattern, material: trimMaterial ?? "minecraft:redstone" };
   else if (trimMaterial) diagnostics.info("TRIM_MATERIAL_WITHOUT_PATTERN_IGNORED", "Nexo only emits an armor trim when trim_pattern resolves", { source, item, field: "trim_material" });
   const components = isObject(config.Components) ? config.Components : undefined;
-  const componentItemModel = components ? mapComponents(components, data, diagnostics, source, item) : undefined;
+  const componentItemModel = components ? mapComponents(components, data, diagnostics, source, item, material) : undefined;
   const unsetPrimary = components ? asStringList(getValue(components, "unset_components")) : [];
   const unset = unsetPrimary.length > 0 || !components ? unsetPrimary : asStringList(getValue(components, "unset_component"));
   const normalizedUnset = unset.map(normalizeComponentName).filter((value): value is string => value !== undefined);
@@ -596,7 +597,7 @@ export function convertItem(
   const itemModelSection = getObject(item.config, "ItemModel");
   const modelContext = { source: item.source, item: item.id, diagnostics, modelAliases: options.modelAliases };
   const packInfo = readPackModel(pack, item.id, modelContext);
-  const { data, componentItemModel } = mapRootData(item.config, diagnostics, item.source, item.id);
+  const { data, componentItemModel } = mapRootData(item.config, diagnostics, item.source, item.id, material);
   const effectiveColor = typeof item.config.color === "string" && nexoColor(item.config.color) !== undefined ? item.config.color : undefined;
   const convertedModels = convertModels(packInfo, itemModelSection, material, effectiveColor, options.clientMode, modelContext);
   const ce: JsonObject = { material };

@@ -1,5 +1,4 @@
 import type { DiagnosticBag } from "./diagnostics.js";
-import { MINECRAFT_1_21_11_SOLID_BLOCK_PATTERN } from "./minecraft-1.21.11.js";
 import { normalizeSoundLocation } from "./resource-location.js";
 import {
   asStringList,
@@ -150,6 +149,9 @@ function mapElement(properties: JsonObject | undefined, context: Context): JsonO
   const element: JsonObject = {
     type: "item_display",
     item: context.targetId,
+    // Nexo stores the placed source item's color and applies it to the display
+    // stack. CraftEngine's tint source performs the equivalent component copy.
+    tint_source: ["minecraft:dyed_color"],
     translation: vectorString(properties ? getValue(properties, "translation") : undefined, 0),
     scale: vectorString(properties ? getValue(properties, "scale") : undefined, defaultScale),
     display_transform: transform,
@@ -392,17 +394,23 @@ function mapHitboxes(rawHitbox: JsonValue | undefined, seats: string[], context:
       result.push(...parsed);
     }
   }
-  // Nexo creates a persistent 0.1x0.1 Interaction at every seat. CraftEngine
-  // requires seat configs to belong to hitboxes, so matching tiny interaction
-  // proxies preserve the clickable location without making unrelated hitboxes
-  // own duplicate seat instances.
-  for (const seat of seats) {
-    const position = nexoSeat(seat);
-    result.push({
-      type: "interaction", position, width: 0.1, height: 0.1, interactive: true,
-      blocks_building: false, can_use_item_on: false, can_be_hit_by_projectile: false,
-      _nexo_seat_proxy: true, seats: [position],
-    });
+  const seatPositions = seats.map(nexoSeat);
+  if (seatPositions.length > 0 && result.length > 0) {
+    // CE mounts only seats owned by the hitbox that received the click. Put the
+    // same root-relative seats on every converted hitbox so an outer shulker or
+    // another visible part cannot hide the mount action. CE deduplicates equal
+    // seat positions across hitboxes into one runtime Seat instance.
+    for (const hitbox of result) hitbox.seats = [...seatPositions];
+  } else {
+    // An explicit empty/invalid Nexo hitbox still has its 0.1x0.1 seat entities.
+    // Keep tiny CE proxies only for this no-clickable-hitbox fallback case.
+    for (const position of seatPositions) {
+      result.push({
+        type: "interaction", position, width: 0.1, height: 0.1, interactive: true,
+        blocks_building: false, can_use_item_on: false, can_be_hit_by_projectile: false,
+        _nexo_seat_proxy: true, seats: [position],
+      });
+    }
   }
   return result;
 }
@@ -538,7 +546,6 @@ function mapPlacement(furniture: JsonObject, context: Context): PlacementMapping
 export interface FurnitureRuntimeSettings {
   defaultRotatableOnSneak?: boolean;
   rotationGamemodes?: string[];
-  solidCustomBlockIds?: string[];
 }
 
 interface RotatableMapping {
@@ -592,6 +599,27 @@ function shiftedSeat(value: string, offset: readonly [number, number, number]): 
   return [position, ...words.slice(1)].join(" ");
 }
 
+function omitDefaultHitboxFields(hitbox: JsonObject): void {
+  // CraftEngine 26.8 already applies these parser defaults. Keeping only values
+  // that differ follows the reference converter and avoids noisy boilerplate.
+  for (const key of ["interactive", "blocks_building", "can_use_item_on", "can_be_hit_by_projectile"] as const) {
+    if (hitbox[key] === true) delete hitbox[key];
+  }
+  if (hitbox.invisible === false) delete hitbox.invisible;
+  if (hitbox.type === "interaction") {
+    if (hitbox.width === 1) delete hitbox.width;
+    if (hitbox.height === 1) delete hitbox.height;
+  } else if (hitbox.type === "shulker") {
+    if (hitbox.scale === 1) delete hitbox.scale;
+    if (hitbox.peek === 0) delete hitbox.peek;
+    if (hitbox.direction === "up") delete hitbox.direction;
+    if (hitbox.interaction_entity === true) delete hitbox.interaction_entity;
+  } else if (hitbox.type === "happy_ghast") {
+    if (hitbox.scale === 1) delete hitbox.scale;
+    if (hitbox.hard_collision === true) delete hitbox.hard_collision;
+  }
+}
+
 function shiftedHitboxes(
   hitboxes: JsonValue[],
   baseOffset: readonly [number, number, number],
@@ -610,19 +638,9 @@ function shiftedHitboxes(
     const offset = seatProxy ? seatEntityOffset : nexoBarrier ? barrierOffset : hitbox.type === "interaction" ? interactionOffset : baseOffset;
     hitbox.position = shiftedVector(hitbox.position, offset);
     if (Array.isArray(hitbox.seats)) hitbox.seats = hitbox.seats.map((seat) => typeof seat === "string" ? shiftedSeat(seat, seatPlayerOffset) : deepClone(seat));
+    omitDefaultHitboxFields(hitbox);
     return hitbox;
   });
-}
-
-function addOffsetVectors(
-  first: readonly [number, number, number],
-  second: readonly [number, number, number],
-): readonly [number, number, number] {
-  return [
-    Number((first[0] + second[0]).toFixed(8)),
-    Number((first[1] + second[1]).toFixed(8)),
-    Number((first[2] + second[2]).toFixed(8)),
-  ];
 }
 
 function shiftedFurnitureLights(
@@ -633,128 +651,6 @@ function shiftedFurnitureLights(
     const light = deepClone(rawLight);
     light.position = shiftedVector(light.position, offset);
     return light;
-  });
-}
-
-function addBarrierGridProfiles(
-  variants: JsonObject,
-  sourceHitboxes: JsonValue[],
-  placement: PlacementMapping,
-  variantOffsets: Map<string, readonly [number, number, number]>,
-): JsonObject[] {
-  const hasBarrier = sourceHitboxes.some((entry) => isObject(entry) && entry._nexo_barrier === true);
-  if (!hasBarrier) return [];
-
-  const placeFunctions: JsonObject[] = [];
-  for (const anchor of ["ground", "ceiling"] as const) {
-    if (!placement.variants.includes(anchor)) continue;
-    const source = variants[anchor];
-    if (!isObject(source)) continue;
-    for (let sixteenth = 1; sixteenth < 16; sixteenth++) {
-      const fraction = sixteenth / 16;
-      const gridOffset = anchor === "ground" ? 1 - fraction : -fraction;
-      const profileName = "_nexo_" + anchor + "_barrier_grid_" + sixteenth;
-      const profile = deepClone(source);
-      const gridVector: readonly [number, number, number] = [0, gridOffset, 0];
-      // Nexo places ground/ceiling furniture at the adjacent integer block cell,
-      // while CE roots it at the exact ray-hit height. Move the complete variant
-      // (display, every hitbox, and passenger point), not only its Barrier proxy.
-      // Otherwise seats and visuals remain on the fractional support surface.
-      if (Array.isArray(profile.elements)) {
-        for (const rawElement of profile.elements) {
-          if (isObject(rawElement)) rawElement.position = shiftedVector(rawElement.position, gridVector);
-        }
-      }
-      if (Array.isArray(profile.hitboxes)) {
-        profile.hitboxes = shiftedHitboxes(
-          profile.hitboxes,
-          gridVector, gridVector, gridVector, gridVector, gridVector,
-        );
-      }
-      if (profile.loot_spawn_offset !== undefined) {
-        profile.loot_spawn_offset = shiftedVector(profile.loot_spawn_offset, gridVector);
-      }
-      variants[profileName] = profile;
-      variantOffsets.set(profileName, addOffsetVectors(
-        variantOffsets.get(anchor) ?? [0, 0, 0], gridVector,
-      ));
-      const positionY = "<arg:position.y>";
-      placeFunctions.push({
-        type: "set_furniture_variant",
-        variant: profileName,
-        conditions: [
-          { type: "match_furniture_variant", variant: anchor },
-          {
-            type: "expression",
-            expression: "ABS((" + positionY + "-FLOOR(" + positionY + "))-" + fraction + ")<0.00001",
-          },
-        ],
-      });
-    }
-  }
-  return placeFunctions;
-}
-
-function addWallSupportProfile(
-  variants: JsonObject,
-  sourceHitboxes: JsonValue[],
-  unsupportedWallZ: number,
-  solidCustomBlockIds: string[],
-  variantOffsets: Map<string, readonly [number, number, number]>,
-): JsonObject[] {
-  const wall = variants.wall;
-  if (!isObject(wall)) return [];
-  const supportedName = "_nexo_wall_supported";
-  const supported = deepClone(wall);
-  const deltaZ = Number((0.5 - unsupportedWallZ).toFixed(8));
-  if (Array.isArray(supported.elements)) {
-    for (const rawElement of supported.elements) {
-      if (isObject(rawElement)) rawElement.position = shiftedVector(rawElement.position, [0, 0, deltaZ]);
-    }
-  }
-  const barrierIndexes = new Set(sourceHitboxes
-    .map((entry, index) => isObject(entry) && entry._nexo_barrier === true ? index : -1)
-    .filter((index) => index >= 0));
-  if (Array.isArray(supported.hitboxes)) {
-    supported.hitboxes.forEach((rawHitbox, index) => {
-      if (!isObject(rawHitbox) || barrierIndexes.has(index)) return;
-      rawHitbox.position = shiftedVector(rawHitbox.position, [0, 0, deltaZ]);
-      if (Array.isArray(rawHitbox.seats)) {
-        rawHitbox.seats = rawHitbox.seats.map((seat) => typeof seat === "string"
-          ? shiftedSeat(seat, [0, 0, deltaZ])
-          : deepClone(seat));
-      }
-    });
-  }
-  variants[supportedName] = supported;
-  variantOffsets.set(supportedName, addOffsetVectors(
-    variantOffsets.get("wall") ?? [0, 0, 0], [0, 0, deltaZ],
-  ));
-
-  const x = "<arg:position.x>";
-  const y = "<arg:position.y>-1";
-  const z = "<arg:position.z>";
-  const directions = [
-    { yaw: -90, x, z },
-    { yaw: 90, x: x + "-0.01", z },
-    { yaw: 0, x, z },
-    { yaw: 180, x, z: z + "-0.01" },
-  ];
-  return directions.map<JsonObject>((direction) => {
-    const conditions: JsonObject[] = [
-      { type: "match_furniture_variant", variant: "wall" },
-      { type: "expression", expression: "ABS(<arg:furniture.yaw>-(" + direction.yaw + "))<0.01" },
-      {
-        type: "match_block",
-        blocks: [
-          MINECRAFT_1_21_11_SOLID_BLOCK_PATTERN,
-          ...solidCustomBlockIds.map((id) => id.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")),
-        ],
-        regex: true,
-        x: direction.x, y, z: direction.z,
-      },
-    ];
-    return { type: "set_furniture_variant", variant: supportedName, conditions };
   });
 }
 
@@ -798,12 +694,10 @@ function convertFurniture(
   const hitboxes = mapHitboxes(getValue(furniture, "hitbox"), seats, context);
   const lightMapping = mapFurnitureLights(furniture, hitboxes, context);
   const variants: JsonObject = {};
-  // Generated profiles move complete geometry relative to the same CE root.
-  // Keep the extra local transform so glowing_furniture follows that geometry.
+  // Light positions follow each explicit ground/ceiling/wall anchor directly.
   const variantOffsets = new Map<string, readonly [number, number, number]>();
   const fixed = element.display_transform === "fixed";
   const scale = configVector(properties ? getValue(properties, "scale") : undefined, fixed ? 0.5 : 1);
-  const hasBarrier = hitboxes.some((entry) => isObject(entry) && entry._nexo_barrier === true);
   const offsetAgainstBlocks = properties ? getBoolean(properties, "offset_against_blocks", true) : true;
   const translation = configVector(properties ? getValue(properties, "translation") : undefined, 0);
   const recomposeFixedQuarterTurn = fixed && canRecomposeFixedQuarterTurn(properties);
@@ -812,7 +706,7 @@ function convertFurniture(
   if (offsetAgainstBlocks && hasOrdinaryInteraction && Math.abs(translation[1]) > 1e-8) {
     context.diagnostics.warning(
       "FURNITURE_INTERACTION_PARTIAL_TRANSLATION_DYNAMIC",
-      "Nexo conditionally removes display translation.y from Interaction hitboxes above partial-height support; static CraftEngine variants preserve the ordinary full-block position",
+      "Nexo conditionally removes display translation.y from Interaction hitboxes above partial-height support; the concise CraftEngine base variant preserves the ordinary local hitbox offset",
       detail(context, "Mechanics.furniture.properties.translation", true),
     );
   }
@@ -872,28 +766,14 @@ function convertFurniture(
     interactionOffset = [offset[0], offset[1] - 0.5 + interactionTranslationY, offset[2]];
     if (offset.some((part) => part !== 0)) variantElement.position = shiftedVector(undefined, offset);
     const seatEntityOffset: [number, number, number] = [offset[0], offset[1] + translation[1], offset[2]];
-    // Nexo's 0.1-high Interaction passenger point is y+0.1 and the player's
-    // vehicle attachment is y+0.6. CE compensates its zero-high ItemDisplay by
-    // adding 0.6, so subtract 0.5 from the Nexo configured seat to preserve the
-    // vanilla-observed player position.
-    const seatPlayerOffset: [number, number, number] = [offset[0], offset[1] + translation[1] - 0.5, offset[2]];
+    // Nexo spawns its seat Interaction at the configured Y. CE's BukkitSeat
+    // unconditionally adds 0.6 before spawning the vehicle, so subtract exactly
+    // 0.6 here to keep the final riding anchor at Nexo's configured height.
+    const seatPlayerOffset: [number, number, number] = [offset[0], offset[1] + translation[1] - 0.6, offset[2]];
     if (variant === "ground") barrierOffset = offset;
     variants[variant] = { elements: [variantElement], hitboxes: shiftedHitboxes(hitboxes, offset, interactionOffset, barrierOffset, seatEntityOffset, seatPlayerOffset) };
-    // CE glowing positions are furniture-root-relative. Record the full anchor
-    // transform first; generated grid/support profiles add their local delta.
+    // CE glowing positions are furniture-root-relative to this placement anchor.
     variantOffsets.set(variant, offset);
-  }
-  // Vanilla collision surfaces use 1/16-block voxel coordinates. CE's place
-  // event can select a native variant from the actual ray-hit Y and move the
-  // complete furniture to Nexo's adjacent integer target cell.
-  const placeFunctions = hasBarrier
-    ? addBarrierGridProfiles(variants, hitboxes, placement, variantOffsets)
-    : [];
-  if (placement.wall && fixed && placement.hasLimited) {
-    const unsupportedWallZ = Number((0.5 - 0.98 * scale[1]).toFixed(8));
-    placeFunctions.push(...addWallSupportProfile(
-      variants, hitboxes, unsupportedWallZ, runtime?.solidCustomBlockIds ?? [], variantOffsets,
-    ));
   }
   if (seats.length > 0) {
     const translation = configVector(properties ? getValue(properties, "translation") : undefined, 0);
@@ -926,7 +806,7 @@ function convertFurniture(
         variantOffsets.get(name) ?? [0, 0, 0],
       );
     }
-    definition.behaviors = [{ type: "glowing_furniture", variants: litVariants }];
+    definition.behavior = [{ type: "glowing_furniture", variants: litVariants }];
     if (lightMapping.toggleable) {
       toggleableLight = true;
       const cases: JsonObject[] = [];
@@ -962,7 +842,6 @@ function convertFurniture(
     rightClickFunctions.push({ type: "rotate_furniture", degree: rotatable.degree, conditions: deepClone(rotatable.conditions) });
   }
   const events: JsonObject[] = [];
-  if (placeFunctions.length > 0) events.push({ on: "place", functions: placeFunctions });
   if (rightClickFunctions.length > 0) events.push({ on: "right_click", functions: rightClickFunctions });
   if (events.length > 0) definition.events = events;
   const loot = mapFurnitureLoot(getObject(furniture, "drop"), context);

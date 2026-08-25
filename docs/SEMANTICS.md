@@ -87,7 +87,20 @@ Nexo 1.26 的 ComponentParser 只认识固定白名单，并且键名大小写�
 - minimum_attack_charge，限制 0..1
 - damage_type
 
-需要 Nexo 对实时 registry、材质默认组件或自定义 ItemStack 展开的复杂组件会被省略并发出 COMPONENT_CODEC_MANUAL，避免 CE 的 Minecraft codec 在加载时抛异常。完整列表见兼容矩阵。
+以下 16 类 Nexo builder 输入也会先按 Nexo 1.26 构造语义展开，再写成锁定的 Minecraft 1.21.11 codec，而不是直拷 YAML：
+
+- can_place_on / can_break
+- tool
+- jukebox_playable
+- use_remainder
+- death_protection / consumable
+- equippable / repairable
+- weapon / blocks_attacks / attack_range
+- kinetic_weapon / piercing_weapon / swing_animation / use_effects
+
+实现使用官方 1.21.11 data-generator 的 item、block、block-state、entity、effect、sound、jukebox-song 与 damage-type/tag 快照，并按官方 codec 处理标量、list、HolderSet、必填字段和默认值。例如 jukebox_playable 是标量 holder，can_place_on/can_break 是单 predicate 或 predicate list，use_remainder 是 `{id,count,components?}` ItemStack，而不是第三方示例中的近似 section。未注册的自定义 SoundEvent 会写成可解码的 inline `{sound_id:...}`，不会错误地冒充 registry holder。
+
+只有不能静态决定或无法通过目标 codec 的子情况才省略并发出 COMPONENT_CODEC_MANUAL：nexo_block、包含非标量值的 state predicate、Nexo/Crucible/MMOItems/序列化 ItemStack 余留物、未知运行时 jukebox/entity/damage registry 条目、必须展开多个实时 registry 标签的 HolderSet，以及目标 codec 明确要求正数但源值为 0 的字段。普通 state 会按官方 block report 验证属性名；Nexo 会忽略的未知属性也会被忽略并诊断。consumable 缺失字段则按官方 1.21.11 items report 中基础材质的 ItemStack 组件补全。
 
 Nexo 将 Components.unset_components 保存到最后执行。因此 CE 输出也把 remove_components 放在所有组件处理器之后；它可以删除由 material、ItemModel 或 PotionEffects 生成的组件。根级 unset_components 在 Nexo 1.26 中不生效。
 
@@ -114,6 +127,7 @@ Nexo 将 Components.unset_components 保存到最后执行。因此 CE 输出也
 - 数字 left_rotation 是 Y 轴角度；数字 right_rotation 是 X 轴角度。
 - Nexo 矩阵为 T*L*S*R；CE 只有一个 pre-scale rotation。右旋转非单位且 scale 非均匀时不能精确折叠，必须诊断。
 - 对同时带 Nexo FIXED yaw -180 与 floor/roof pitch ±90 的元素，若水平 translation 为 0 且 left/right rotation 均为单位旋转，转换器使用恒等式 Yπ·X(p)=X(-p)·Yπ：删除 element yaw、反转 pitch，并写入 CE metadata rotation `0,1,0,0`。该分解与 Minecraft 完整运行时矩阵等价，也避免 CE 编辑器把非交换 yaw/pitch 组合上下反转；translation.y 和非均匀 scale 均可安全保留。存在水平 translation 或自定义旋转时不做此折叠。
+- Nexo 放置家具时会把实际来源 ItemStack 的染色值应用到显示物品。每个 CE `item_display` 因此写入 `tint_source: [minecraft:dyed_color]`，从家具保存的来源物品复制运行时 `minecraft:dyed_color`；染色后再放置不再回退到配置中的默认颜色，破坏后掉落的来源物品也继续保留该组件。
 
 ### 7.2 放置面
 
@@ -126,9 +140,9 @@ floor/roof/wall 再分别默认 !anyRestrictions
 
 因此 {floor:false, roof:true} 的未写 wall 仍会变成 true。转换器保留这个边界行为。
 
-FIXED 地面在完整方块上位于整数 Y；CE ground 原生保留 Minecraft 射线命中的表面 Y。对于 Barrier，转换器额外生成 1/16..15/16 的原生 CE placement profiles，并在 place 事件中依据真实 ray-hit Y 选择。每个 profile 会把显示元素、所有 hitbox、seat proxy、玩家座位点、loot_spawn_offset 与 glowing light position 一起移动到 Nexo 的相邻整数目标格；因此 slab、trapdoor、snow layer 等原版 voxel surface 上的视觉、碰撞、座位、掉落点和灯光保持同一坐标系，也不会在不同 profile 中输出重复的字面座位坐标。
+每个家具只生成 Nexo 实际启用的 `ground`、`ceiling`、`wall` 基础放置面。CE ground/ceiling 根节点直接使用 Minecraft 射线命中的表面；转换器不再为 Barrier 展开 1/16..15/16 高度 profiles，也不生成读取 `<arg:position.y>` 的 place 事件。因此完整方块保持既有坐标，而 slab、trapdoor、snow layer 等局部表面遵循 CE 的实际点击高度。
 
-FIXED wall 同时生成“无下方支撑”和“有下方支撑”两个 variant。place 事件按 CE wall yaw 找到目标格下方方块，并用锁定的 Minecraft 1.21.11 Bukkit Material.isSolid 表（913 个原版 block id）自动选择；同包内转换后的 Nexo NoteBlock id 也加入此判断。Nexo 的 wall entity anchor 位移发生在 offset_against_blocks 判断之前，因此该选项为 false 时也不能删除 support profile；它只控制之后的 display transformation correction。墙面 Barrier 独立保持在目标方块中心，不跟随显示实体偏移。该表由 Paper 1.21.11-116 实际运行时导出，Paper JAR SHA-256 为 E708E8C132DC143FFD73528CCCB9532E2EB17628B1A0EEE74469BF466C7003F8。
+FIXED wall 仅输出一个明确的 `wall` 基础 variant，不再生成 `_nexo_wall_supported`、四组 yaw 表达式或 Material.isSolid 方块表。显示元素保留静态 wall anchor，墙面 Barrier 仍独立位于目标方块中心；Nexo 根据下方支撑动态改变显示位置的差异需要按具体家具人工微调。
 
 Nexo 的 floor/roof support-derived 水平点击只提供到同一 ground/ceiling 世界状态的另一条输入路径；CE 通过点击支撑方块 UP/DOWN 面原生到达该状态。转换器不会伪造无条件 wall variant，因为那会错误允许悬空放置。
 
@@ -140,51 +154,59 @@ Nexo 的 floor/roof support-derived 水平点击只提供到同一 ground/ceilin
 - barrier 的 a..b 是闭区间笛卡尔积。
 - 单个 Interaction size 数字同时作为 width 和 height。
 - shulker length 限制为 1..2，并按原版 peek 几何转换；默认方向 DOWN。
-- 每个 barrier 坐标转换为 CE `shulker`（`scale: 1`、`peek: 0`）：这是精确的 1×1×1 硬 AABB，并保留阻止建造、物品使用与弹射物命中，因此按家具 hitbox 功能契约视为原生支持且不告警。Nexo 额外维护客户端虚拟 Barrier 方块包、水/生长/活塞监听；这些属于表示层和环境插件接口，不是 CE collider 几何。ceiling 的 ItemDisplay 保留 Nexo 的 -0.01 clearance，但 Barrier 的 CE bottom-center 必须位于 -1；二者数字不同才对应同一个 Nexo 世界状态。
+- 每个 barrier 坐标转换为 CE `shulker`；省略的 `scale: 1`、`peek: 0`、`direction: up`、`blocks_building: true`、`can_use_item_on: true` 和 `can_be_hit_by_projectile: true` 均由 CE 26.8 parser 默认补齐。这仍是精确的 1×1×1 硬 AABB，并保留阻止建造、物品使用与弹射物命中，因此按家具 hitbox 功能契约视为原生支持且不告警。Nexo 额外维护客户端虚拟 Barrier 方块包、水/生长/活塞监听；这些属于表示层和环境插件接口，不是 CE collider 几何。ceiling 的 ItemDisplay 保留 Nexo 的 -0.01 clearance，但 Barrier 的 CE bottom-center 必须位于 -1；二者数字不同才对应同一个 Nexo 世界状态。
 - Nexo 的普通 Interaction packet 以 ItemDisplay 位置减 0.5Y 作为 AABB bottom-center，并另加旋转到世界 Y 的 display translation 分量。CE Interaction 同样使用 bottom-center，所以不能把 element position 原样复制给 Interaction。
-- ItemDisplay 的 element position、模型可见边界和 hitbox 本来就是三组独立数据。`display_transform: FIXED` 还会让 Minecraft 应用各资源模型 JSON 的 `display.fixed` rotation/translation/scale；Nexo 不会根据模型元素自动推导碰撞体。因此两个家具可以安全共享同一 CE family，同时仍使用不同 item model 和不同最终视觉变换。
+- ItemDisplay 的 element position、模型可见边界和 hitbox 本来就是三组独立数据。`display_transform: FIXED` 还会让 Minecraft 应用各资源模型 JSON 的 `display.fixed` rotation/translation/scale；Nexo 不会根据模型元素自动推导碰撞体。因此两个家具即使使用相同几何逻辑，也仍会保留各自的 item model 和最终视觉变换。
 
-Nexo 座椅是高 0.1 的 Interaction。原版玩家 vehicle attachment 为 0.6，因此玩家脚部位于配置座椅 Y-0.5。CE 的 ItemDisplay vehicle 高度为 0 且自身补偿 +0.6，所以本工具为每个 Nexo seat 创建独立 0.1×0.1 Interaction proxy，并把 CE seat Y 下移 0.5；seat 仍是 furniture-root-relative。
+Nexo 在配置坐标生成高 0.1 的座位 Interaction；CraftEngine `BukkitSeat.calculateSeatLocation` 会在配置 Y 上固定加 0.6 后再生成乘坐实体。因此转换器把 CE seat Y 精确下移 0.6，使最终乘坐锚点回到 Nexo 的配置高度；seat 仍是 furniture-root-relative。CE 只尝试当前点击 hitbox 所属的座位，所以同一座位会挂到每个已转换 hitbox；CE 会按相同 position 将它们去重为同一个运行时 Seat。只有显式空或无有效 hitbox 时，才生成 0.1×0.1 Interaction proxy 作为可点击兜底。
 
-简单 self-drop 会在转换器自有的 family template 内写出完整 CE loot pools，不依赖 default:loot_table/furniture 或 default:loot_table/self；转换包可以独立解析，也不会因编辑器未加载 CE 默认模板包而报 unknown-template。
+简单 self-drop 会直接在家具定义内写出完整 CE loot pools，不依赖 default:loot_table/furniture 或 default:loot_table/self；转换包可以独立解析，也不会因编辑器未加载 CE 默认模板包而报 unknown-template。
 
 ### 7.4 灯光
 
 - `lights.lights` 的单点、`origin`、闭区间笛卡尔积和 0..15 等级按 Nexo 1.26 解析。
 - 与 Nexo barrier 坐标重叠的灯光会像 Nexo 一样被忽略。
 - 输出使用 CraftEngine `glowing_furniture` behavior；相对坐标继续应用 `(-x,y,-z)` 基变换。CraftEngine 26.8 的全局 `furniture.light-system.enable` 必须保持 `true`（官方默认值）；关闭后 CE 本身会拒绝加载任何 glowing furniture。
-- 灯光先应用 base anchor 的完整局部偏移（包括非 FIXED ground、ceiling 和 wall），再应用生成 profile 的增量：ground/ceiling grid 同步 Y，supported wall 同步 Z。灯光不会错误停留在未平移的 furniture root。
+- 灯光应用每个基础 ground/ceiling/wall anchor 的完整局部偏移；不会为不存在的 grid/support profile 重复生成坐标。
 - `toggleable:true` 会为每个放置面生成持久化的 unlit variant，并使用 `right_click` + `set_furniture_variant` 在亮/灭状态间切换；初始状态与 Nexo 一样为亮。unlit variant 不会进入 glowing behavior 的 variants map。
 - `toggled_model`/`toggled_item_model` 还需要单独的 CE 显示物品，因此存在时继续给出明确诊断。
 
-### 7.5 CraftEngine 原生模板输出
+### 7.5 可读的具体家具输出
 
-转换器先生成完整、具体的 furniture 语义对象；只有写 YAML 时才执行模板压缩。因此坐标/事件转换逻辑和模板去重彼此分离，单元测试仍可直接验证 concrete variants。
+转换器直接把完整 furniture 语义对象写入 `configuration/furniture.yml`，不再把它重写为结构哈希模板图。每个家具 ID 下都能直接看到 `settings`、`variants`、`hitboxes`、`events`、`behavior` 与 `loot`。
 
-- `configuration/furniture.yml` 中每个家具只有一个作者命名空间内的 family template 引用。
-- `configuration/furniture-templates.yml` 保存所有生成模板，并且只在确有 furniture 时创建。
-- 在计算结构哈希前，目标物品 ID 会替换为 `${__NAMESPACE__}:${__ID__}`。相同 geometry、variant map 和整个 family 可以跨物品复用，同时展开后仍恢复当前家具 ID。
-- CE 26.8 的模板处理器会递归处理任意嵌套 map/list、动态 template ID、whole-node 参数和 typed expression 参数；因此 variants、event function list、toggle case list 和 glowing behavior map 都能使用模板。
-- 15 个 grid profile 没有被删除。共享 grid template 仍声明全部 profile；每个 family 只传一个 shiftable geometry/light template，Y 坐标由 `expression` 参数加上 profile shift。CE 在 furniture parser 之前展开为完整 concrete profiles。
-- place function、toggle case 与 light-variant boilerplate 按 ground/ceiling 全局共享；literal geometry 和 family 按稳定 SHA-256 前缀去重。
-- 生成模板完全属于推断出的作者命名空间，不依赖可变的 `default:*` 模板，也不需要 config_factory、伴生插件或运行时转换脚本。
+- 不生成 `configuration/furniture-templates.yml`。
+- 不生成 `_nexo2ce/furniture/variant-shift/*`、`__nexo2ce_*` 或 `${...}` 参数。
+- 不生成 `_nexo_ground_barrier_grid_*`、`_nexo_ceiling_barrier_grid_*`、`_nexo_wall_supported` 或相关 place expressions。
+- toggleable 灯光仅为实际基础放置面生成一对 lit/unlit variant 与两条切换 case，避免成倍重复。
+- 输出无需跨文件追踪哈希，也不会因自动 profile 展开到数千行，便于人工审阅、排错和修改。
 
-这利用的是 [CraftEngine 官方 Template System](https://xiao-momi.github.io/craft-engine-wiki/reference/template/)，不是省略行为：模板展开后的 settings、variants、events、behaviors 和 loot 才交给 CE 原生 furniture parser。
+这一输出取舍参考 [1robie/CraftEngineConverter](https://github.com/1robie/CraftEngineConverter) 只构造 `GROUND`/`WALL`/`CEILING` placement 对象的方式；本项目继续保留锁定版本下的方向、hitbox、座位、灯光与交互转换。
 
-## 8. Custom blocks
+## 8. Item browser categories
+
+- 输出遵循 [CraftEngine category 配置](https://xiao-momi.github.io/craft-engine-wiki/zh-Hans/configuration/category)，仅在至少有一个可浏览物品时创建 `configuration/categories.yml`。
+- Nexo 默认 `NexoInventory.type: FILE`：每个含有效成员的 item/items YAML 生成一个可见 CE 分类，`list` 保持该文件的原始物品顺序。
+- `DIRECTORY` 模式保留目录树：顶层目录/文件是可见分类，后代节点写为 `hidden: true`，父分类用带 `#` 前缀的条目引用直接子分类。
+- 只有成功转换且最终继承配置未设置 `excludeFromInventory: true` 的物品进入分类；纯模板、空文件和转换失败物品不会制造缺失成员。
+- `inventory.yml` 优先于旧 `settings.yml/NexoInventory`；两者存在时递归合并。`layout.*.itemname`、`displayname` 或 `title` 映射为 `name`，`icon`（以及 DIRECTORY 的全局 `directory_icon`）映射为图标，1-based `slot` 映射为 0-based `priority`。布局中的 Nexo glyph tag 与其他文本一样重写为 CE image tag。
+- 本地 Nexo 图标 ID 会重映射到目标作者命名空间；无法对应成功转换物品时，回退为分类首个成员（再无成员则为 `minecraft:stone`）并诊断，避免 CE 菜单显示缺失屏障。
+- CE 的 `lore`、`conditions` 和 `all_items` 没有 Nexo 物品浏览器中的直接静态来源，因此不猜测生成。
+
+## 9. Custom blocks
 
 - noteblock/stringblock/chorusblock 交给 CE 自动分配 carrier state；绝不复制 Nexo custom_variation。
 - 没有可解析基础模型时，不输出可放置 block 或 block_item，避免生成错误外观的方块。
 - source drop 缺失或被证明是精确 self-drop 时才写 CE self loot。
 - 无法证明等价的自定义 drop 会省略 loot 并诊断，绝不额外掉落自身。
 
-## 9. Recipes
+## 10. Recipes
 
 - shaped pattern 中每个非空格字符都必须有成功转换的 ingredient；否则整个 recipe 省略，因为 CE 会抛 Invalid ingredient。
 - cooking experience 保留浮点数，不截断。
 - MMOItems/Crucible ExactChoice、序列化 ItemStack 与未展开的 Nexo tag 需要人工处理。
 
-## 10. Glyph
+## 11. Glyph
 
 - 文件按 basename 排序，普通 glyph 先于 reference glyph。
 - 显式字符先预留，自动分配从十进制 42000 开始。
@@ -193,7 +215,7 @@ Nexo 座椅是高 0.1 的 Interaction。原版玩家 vehicle attachment 为 0.6�
 - reference range、整图 tag、逐行换行、<shift:-1>、colorable 与转义 tag 都会转换。
 - permission、placeholder/emoji/tab completion 与 per-use shadow 无 CE 等价时会诊断。
 
-## 11. 审计与失败策略
+## 12. 审计与失败策略
 
 默认审计：
 
