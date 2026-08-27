@@ -487,6 +487,36 @@ impl eframe::App for ConverterApp {
     }
 }
 
+/// egui's bundled default fonts have no CJK glyphs, which renders every
+/// Chinese label as a tofu box. Append a system CJK font as the fallback for
+/// both families (ASCII keeps the default look; CJK resolves to this font).
+fn install_cjk_font(ctx: &egui::Context) {
+    let candidates: &[&str] = &[
+        // Windows: Microsoft YaHei (TTC face 0), then SimHei.
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\msyh.ttf",
+        "C:\\Windows\\Fonts\\simhei.ttf",
+        // Common Linux CJK fonts.
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    ];
+    for path in candidates {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let mut fonts = egui::FontDefinitions::default();
+        fonts
+            .font_data
+            .insert("cjk".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts.families.entry(family).or_default().push("cjk".to_owned());
+        }
+        ctx.set_fonts(fonts);
+        return;
+    }
+}
+
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -498,6 +528,9 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Nexo → CraftEngine",
         options,
-        Box::new(|_cc| Ok(Box::new(ConverterApp::default()))),
+        Box::new(|cc| {
+            install_cjk_font(&cc.egui_ctx);
+            Ok(Box::new(ConverterApp::default()))
+        }),
     )
 }
