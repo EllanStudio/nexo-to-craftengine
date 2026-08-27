@@ -24,6 +24,20 @@ jobs:
         run: cargo build --verbose
       - name: Test
         run: cargo test --verbose
+      - name: Build CLI (release)
+        run: cargo build --release
+      - name: Upload Linux CLI
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexo2ce-linux
+          path: target/release/nexo2ce
+      - name: Upload Windows CLI
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexo2ce-windows-cli
+          path: target/release/nexo2ce.exe
 
   gui:
     name: Build (egui GUI, Windows)
@@ -33,3 +47,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build GUI
         run: cargo build --verbose --features gui
+      - name: Build GUI (release)
+        run: cargo build --release --features gui
+      - name: Upload Windows GUI + CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexo2ce-windows
+          path: |
+            target/release/nexo2ce.exe
+            target/release/nexo2ce-gui.exe
