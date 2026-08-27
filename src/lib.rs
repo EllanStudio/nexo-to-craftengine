@@ -11,6 +11,10 @@
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod diagnostics;
+pub mod json;
+pub mod resource_location;
+
 /// Locked conversion targets, mirrored from the legacy TypeScript core.
 pub mod targets {
     /// Nexo version this converter is audited against.
