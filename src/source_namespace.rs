@@ -228,7 +228,9 @@ mod tests {
     fn normalize_namespace_cleans_raw_names() {
         assert_eq!(normalize_namespace("My Pack.yml").as_deref(), Some("my_pack"));
         assert_eq!(normalize_namespace("__author__").as_deref(), Some("author"));
-        assert_eq!(normalize_namespace("Bad/Name"), None);
+        // TS replaces invalid runs (including "/") with "_" before validating.
+        assert_eq!(normalize_namespace("Bad/Name").as_deref(), Some("bad_name"));
+        assert_eq!(normalize_namespace("..."), None);
     }
 
     #[test]
@@ -240,12 +242,21 @@ mod tests {
 
     #[test]
     fn shared_token_subsequence_wins_for_multiple_files() {
+        // TS requires one filename's FULL token list to be a subsequence of
+        // every other filename; sibling tokens alone (author_swords vs
+        // author_tools) infer nothing.
         let inference = infer_from_nexo_item_paths(&[
+            "items/author_pack.yml".to_string(),
+            "items/author_pack_deluxe.yml".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(inference.namespace, "author_pack");
+        assert_eq!(inference.evidence, "shared author name in Nexo item configuration filenames");
+        assert!(infer_from_nexo_item_paths(&[
             "items/author_swords.yml".to_string(),
             "items/author_tools.yml".to_string(),
         ])
-        .unwrap();
-        assert_eq!(inference.namespace, "author");
+        .is_none());
     }
 
     #[test]

@@ -148,7 +148,7 @@ pub fn write_language_resources(
         if locale.to_lowercase() == "global" {
             continue;
         }
-        let Some(Value::Object(entries)) = value else { continue };
+        let Value::Object(entries) = value else { continue };
         let mut merged = global.clone();
         for (key, entry) in entries {
             merged.insert(key.clone(), entry.clone());
@@ -175,9 +175,16 @@ pub fn write_language_resources(
 mod tests {
     use super::*;
 
+    fn object(entries: &[(&str, &serde_json::Value)]) -> crate::json::JsonObject {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), (*value).clone()))
+            .collect()
+    }
+
     #[test]
     fn language_files_merge_global_scope() {
-        let root = json::object(&[
+        let root = object(&[
             ("global", &serde_json::json!({ "key.shared": "S" })),
             ("en-US", &serde_json::json!({ "key.en": "E" })),
         ]);
@@ -193,11 +200,3 @@ mod tests {
     }
 }
 
-mod json {
-    pub fn object(entries: &[(&str, &serde_json::Value)]) -> crate::json::JsonObject {
-        entries
-            .iter()
-            .map(|(key, value)| (key.to_string(), (*value).clone()))
-            .collect()
-    }
-}

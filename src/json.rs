@@ -18,7 +18,7 @@ pub fn deep_clone(value: &Value) -> Value {
 }
 
 /// Case-insensitive key lookup, mirroring `findKey` in types.ts.
-pub fn find_key(object: &JsonObject, wanted: &str) -> Option<&String> {
+pub fn find_key<'a>(object: &'a JsonObject, wanted: &str) -> Option<&'a String> {
     let needle = wanted.to_lowercase();
     object.keys().find(|key| key.to_lowercase() == needle)
 }

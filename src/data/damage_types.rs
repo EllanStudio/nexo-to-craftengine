@@ -6,9 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-use serde_json::Value;
 
-use crate::json::JsonObject;
 
 
 static DAMAGE_TYPE_IDS_JSON: &str = r##"[

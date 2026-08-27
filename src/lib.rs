@@ -11,10 +11,74 @@
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Resource-pack model strategy, mirrored from the legacy CLI --client-mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientMode {
+    Modern,
+    Hybrid,
+    Legacy,
+}
+
+impl ClientMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "modern" => Some(Self::Modern),
+            "hybrid" => Some(Self::Hybrid),
+            "legacy" => Some(Self::Legacy),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Modern => "modern",
+            Self::Hybrid => "hybrid",
+            Self::Legacy => "legacy",
+        }
+    }
+}
+
+/// Legacy custom_model_data handling, mirrored from the legacy CLI --cmd-policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmdPolicy {
+    Preserve,
+    Allocate,
+    Omit,
+}
+
+impl CmdPolicy {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "preserve" => Some(Self::Preserve),
+            "allocate" => Some(Self::Allocate),
+            "omit" => Some(Self::Omit),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Preserve => "preserve",
+            Self::Allocate => "allocate",
+            Self::Omit => "omit",
+        }
+    }
+}
+
+pub mod audit;
+pub mod categories;
+pub mod component_builders;
+pub mod converter;
 pub mod data;
 pub mod diagnostics;
+pub mod glyphs;
 pub mod io;
+pub mod items;
 pub mod json;
+pub mod mechanics;
+pub mod model_aliases;
+pub mod models;
+pub mod recipes;
 pub mod resource_location;
 pub mod resources;
 pub mod sounds;

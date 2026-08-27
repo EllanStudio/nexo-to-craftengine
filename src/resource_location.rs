@@ -159,11 +159,15 @@ mod tests {
             normalize_location("stone", &mut d, &details, &[], "minecraft").as_deref(),
             Some("minecraft:stone")
         );
+        // Extension stripping is case-insensitive, but uppercase path chars
+        // stay invalid exactly like the TS RESOURCE_PATH regex.
         assert_eq!(
-            normalize_location("custom:Item.PNG", &mut d, &details, &[".png"], "minecraft").as_deref(),
-            Some("custom:Item")
+            normalize_location("custom:item.PNG", &mut d, &details, &[".png"], "minecraft").as_deref(),
+            Some("custom:item")
         );
         assert!(!d.has_errors());
+        assert!(normalize_location("custom:Item.PNG", &mut d, &details, &[".png"], "minecraft").is_none());
+        assert!(d.has_errors());
     }
 
     #[test]

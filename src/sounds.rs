@@ -8,6 +8,16 @@ use crate::diagnostics::{Details, DiagnosticBag};
 use crate::json::{as_string_list, get_boolean, get_number, get_object, get_string, get_value, JsonObject};
 use crate::resource_location::normalize_sound_location;
 
+/// JSON number rendered the way TS JSON.stringify would emit it (integral
+/// values stay integers: 16.0 -> 16).
+fn number_value(value: f64) -> Value {
+    if value.fract() == 0.0 && value.abs() <= i64::MAX as f64 {
+        Value::from(value as i64)
+    } else {
+        Value::from(value)
+    }
+}
+
 pub fn convert_sounds(root: &JsonObject, diagnostics: &mut DiagnosticBag, source: &str) -> JsonObject {
     let mut result = JsonObject::new();
     let raw = get_value(root, "sounds");
@@ -23,7 +33,7 @@ pub fn convert_sounds(root: &JsonObject, diagnostics: &mut DiagnosticBag, source
     };
 
     for entry in entries {
-        let Some(Value::Object(entry)) = entry else {
+        let Value::Object(entry) = entry else {
             diagnostics.error(
                 "SOUND_ENTRY_INVALID",
                 "Each Nexo sound entry must be a map",
@@ -70,10 +80,10 @@ pub fn convert_sounds(root: &JsonObject, diagnostics: &mut DiagnosticBag, source
                 "name": name,
                 "stream": get_boolean(entry, "stream", false),
                 "preload": get_boolean(entry, "preload", false),
-                "volume": get_number(entry, "volume").unwrap_or(1.0),
-                "pitch": get_number(entry, "pitch").unwrap_or(1.0),
-                "weight": get_number(entry, "weight").unwrap_or(1.0),
-                "attenuation_distance": get_number(entry, "attenuation_distance").unwrap_or(16.0),
+                "volume": number_value(get_number(entry, "volume").unwrap_or(1.0)),
+                "pitch": number_value(get_number(entry, "pitch").unwrap_or(1.0)),
+                "weight": number_value(get_number(entry, "weight").unwrap_or(1.0)),
+                "attenuation_distance": number_value(get_number(entry, "attenuation_distance").unwrap_or(16.0)),
             }));
         }
         result.insert(id, json!({ "sounds": converted }));

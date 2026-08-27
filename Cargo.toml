@@ -35,6 +35,8 @@ unicode-normalization = "0.1"
 pathdiff = "0.2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
+# egui/eframe 0.34+ use the App::ui(&mut egui::Ui) trait method and the
+# unified egui::Panel builder (TopBottomPanel/SidePanel were removed).
 eframe = { version = "0.36", optional = true }
 egui = { version = "0.36", optional = true }
 rfd = { version = "0.17", optional = true }

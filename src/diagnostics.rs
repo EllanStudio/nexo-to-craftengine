@@ -128,6 +128,13 @@ impl DiagnosticBag {
         self.push(Severity::Error, code, message, details);
     }
 
+    /// Drain another bag into this one, preserving deduplication.
+    pub fn extend(&mut self, other: DiagnosticBag) {
+        for item in other.items {
+            self.add(item);
+        }
+    }
+
     pub fn has_errors(&self) -> bool {
         self.items.iter().any(|item| item.severity == Severity::Error)
     }
