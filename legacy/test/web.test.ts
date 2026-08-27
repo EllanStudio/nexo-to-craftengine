@@ -225,6 +225,18 @@ test("local Web API converts a ZIP, sanitizes reports, and returns a CE ZIP", as
     assert.equal(report.identity.namespaceMode, "author");
     assert.doesNotMatch(reportText, /nexo2ce-web-api-|nexo2ce-web-/);
     assert.equal(report.diagnostics.length, 0);
+
+    // Second sequential conversion (Batch simulation)
+    const secondArchive = archiveBuffer({
+      "bundle2/Nexo/items/sword.yml": "sword:\n  itemname: Sword\n  material: PAPER\n  Pack:\n    model: custom/sword\n    custom_model_data: 5678\n",
+      "bundle2/Nexo/pack/assets/minecraft/models/custom/sword.json": JSON.stringify({ parent: "minecraft:item/generated", textures: { layer0: "custom/sword" } }),
+      "bundle2/Nexo/pack/assets/minecraft/textures/custom/sword.png": "fixture",
+    });
+    const secondResponse = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/zip" }, body: bodyBuffer(secondArchive) });
+    assert.equal(secondResponse.status, 200);
+    assert.equal(secondResponse.headers.get("x-conversion-success"), "true");
+    assert.equal(secondResponse.headers.get("x-conversion-namespace"), "sword");
+    assert.equal(secondResponse.headers.get("x-conversion-namespace"), "sword");
   } finally {
     await local.close();
     const remaining = await readdir(jobs).catch(() => [] as string[]);

@@ -4,6 +4,9 @@ dist/
 coverage/
 *.tsbuildinfo
 
+# Rust build output
+target/
+
 # Local audit inputs, third-party source snapshots, and generated packs
 references/
 work/

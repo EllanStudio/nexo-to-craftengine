@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Nexo 1.26 到 CraftEngine 26.8 本地极速转换器">
+  <title>Nexo → CraftEngine 批量转换器</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/vendor/fflate.js" defer></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <!-- Ambient background glow -->
+  <div class="ambient ambient-primary" aria-hidden="true"></div>
+  <div class="ambient ambient-secondary" aria-hidden="true"></div>
+
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1 class="brand-title">Nexo <span class="brand-arrow">→</span> CraftEngine</h1>
+          <p class="brand-subtitle">选择 Nexo 来源 · 支持单文件与多文件批量极速转换</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="status-badge" title="数据仅在本机处理，安全不离机">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <span>本地独立运行</span>
+        </span>
+      </div>
+    </header>
+
+    <!-- Main Converter Container -->
+    <main class="main-card">
+      <!-- 01: Drop Zone (When Queue is empty or for dragging files) -->
+      <section id="dropSection" class="section-block">
+        <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-describedby="drop-help">
+          <div class="drop-illustration" aria-hidden="true">
+            <svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M24 6v26m0-26-8 8m8-8 8 8M8 30v7a5 5 0 0 0 5 5h22a5 5 0 0 0 5-5v-7"/>
+            </svg>
+          </div>
+          <h2 class="drop-title">拖入 Nexo 资源文件 (支持批量多选)</h2>
+          <p id="drop-help" class="drop-desc">支持多个 ZIP 压缩包或文件夹批量拖入，自动识别并快速转换</p>
+          
+          <div class="picker-buttons">
+            <button id="chooseZipButton" class="btn btn-primary" type="button">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <path fill-rule="evenodd" d="M4 4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4zm5 1h2v2H9V5zm0 3h2v2H9V8zm0 3h2v2H9v-2zm-2 4h6v1H7v-1z" clip-rule="evenodd"/>
+              </svg>
+              <span>选择 ZIP (支持多选)</span>
+            </button>
+            <button id="chooseFolderButton" class="btn btn-secondary" type="button">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <path d="M2 6a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6z"/>
+              </svg>
+              <span>选择文件夹</span>
+            </button>
+          </div>
+          <div class="drop-footer-hint">支持 Ctrl+V 粘贴 · 批量多选 · 零网络传输 · 即放即转</div>
+          <input id="zipInput" class="visually-hidden" type="file" accept=".zip,application/zip" multiple>
+          <input id="folderInput" class="visually-hidden" type="file" webkitdirectory directory multiple>
+        </div>
+      </section>
+
+      <!-- 02: Batch Queue Section (When files are added) -->
+      <section id="queueSection" class="queue-section is-hidden">
+        <div class="queue-header">
+          <div class="queue-header-left">
+            <h2 class="queue-title">转换任务列表</h2>
+            <span id="queueStatsBadge" class="queue-stats-badge">共 0 个文件</span>
+          </div>
+          <div class="queue-header-actions">
+            <button id="addMoreZipButton" class="btn btn-sm btn-secondary" type="button">+ 添加 ZIP</button>
+            <button id="addMoreFolderButton" class="btn btn-sm btn-secondary" type="button">+ 添加文件夹</button>
+            <button id="clearQueueButton" class="btn btn-sm btn-ghost" type="button">清空</button>
+          </div>
+        </div>
+
+        <!-- Overall Progress Bar (Visible during conversion) -->
+        <div id="batchProgressContainer" class="batch-progress-box is-hidden">
+          <div class="batch-progress-info">
+            <div class="batch-status-row">
+              <div class="mini-spinner"></div>
+              <span id="liveStatus" class="batch-status-text" role="status" aria-live="polite">准备开始转换...</span>
+            </div>
+            <span class="timer-badge">⏱ <span id="elapsedTime">00:00</span></span>
+          </div>
+          <div class="progress-bar-container">
+            <div id="progressBarFill" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Queue Item List -->
+        <div id="queueList" class="queue-list" role="list">
+          <!-- Dynamically populated queue items -->
+        </div>
+
+        <!-- Queue Bottom Action Bar -->
+        <div class="queue-action-bar">
+          <div class="queue-summary-text">
+            <span id="queueSummaryLine">等待开始转换</span>
+          </div>
+          <div class="queue-buttons">
+            <button id="cancelButton" class="btn btn-danger-ghost is-hidden" type="button">取消转换</button>
+            <button id="downloadAllButton" class="btn btn-success-glow is-hidden" type="button">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <path fill-rule="evenodd" d="M3 17a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H4a1 1 0 0 1-1-1zm3.293-7.707a1 1 0 0 1 1.414 0L9 10.586V3a1 1 0 1 1 2 0v7.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3a1 1 0 0 1 0-1.414z" clip-rule="evenodd"/>
+              </svg>
+              <span>一键打包下载全部</span>
+            </button>
+            <button id="convertButton" class="btn btn-primary btn-glow" type="button">
+              <span id="convertBtnText">开始批量转换</span>
+              <span class="key-shortcut">Ctrl ↵</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <p id="inputError" class="alert-error is-hidden" role="alert"></p>
+
+      <!-- Advanced Options (Collapsible) -->
+      <details class="advanced-settings">
+        <summary class="settings-toggle">
+          <span class="toggle-icon">⚙️</span>
+          <span>高级转换选项</span>
+          <span class="settings-hint">命名空间 自动识别 <code>读取作者原包</code></span>
+        </summary>
+        <div class="settings-panel">
+          <fieldset id="optionsFieldset" class="options-fieldset">
+            <legend class="visually-hidden">CraftEngine 转换设置</legend>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="clientModeSelect">客户端模型模式</label>
+                <select id="clientModeSelect" class="form-select">
+                  <option value="hybrid" selected>混合模式 Hybrid (现代 ItemModel + 传统 CMD)</option>
+                  <option value="modern">现代模式 Modern (针对 1.21.4+ 客户端)</option>
+                  <option value="legacy">传统模式 Legacy (仅生成 CustomModelData 树)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="cmdPolicySelect">CMD 策略</label>
+                <select id="cmdPolicySelect" class="form-select">
+                  <option value="preserve" selected>保留原值 Preserve (推荐，保持一致)</option>
+                  <option value="allocate">自动分配 Allocate (仅限全量整包)</option>
+                  <option value="omit">完全省略 Omit (纯现代输出)</option>
+                </select>
+              </div>
+            </div>
+            <div class="settings-checks">
+              <label class="checkbox-label" for="auditInput">
+                <input id="auditInput" type="checkbox" checked>
+                <span>开启资源图完整性审计 (检查材质与模型引用)</span>
+              </label>
+              <label class="checkbox-label" for="strictInput">
+                <input id="strictInput" type="checkbox">
+                <span>严格模式 (遇有损映射立即终止)</span>
+              </label>
+            </div>
+          </fieldset>
+        </div>
+      </details>
+    </main>
+
+    <!-- Diagnostics Details Modal / Flyout for inspecting any item's report -->
+    <div id="diagnosticsModal" class="modal-overlay is-hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <h3 id="modalTitle" class="modal-title">转换详情与诊断</h3>
+            <p id="modalSubtitle" class="modal-subtitle">—</p>
+          </div>
+          <button id="closeModalButton" class="btn btn-sm btn-ghost" type="button">✕</button>
+        </div>
+
+        <!-- Converted Types Grid (转换的种类有啥) -->
+        <div class="modal-section">
+          <h4 class="section-subtitle">转换种类与统计</h4>
+          <div id="resultStats" class="types-grid" aria-label="转换种类统计"></div>
+        </div>
+
+        <!-- Diagnostic Items Breakdown -->
+        <div class="modal-section">
+          <div class="diagnostics-header">
+            <div class="diagnostics-title-wrap">
+              <h4 class="section-subtitle">诊断明细</h4>
+              <span id="diagnosticBadge" class="badge">0</span>
+            </div>
+            <button id="copyDiagnosticsButton" class="btn btn-sm btn-ghost" type="button" title="复制诊断记录为文本">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <path d="M7 3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7.414A2 2 0 0 0 14.414 6L12 3.586A2 2 0 0 0 10.586 3H7z"/>
+                <path d="M5 7a1 1 0 0 1 1-1h1v1.5A1.5 1.5 0 0 0 8.5 9H10v1H6a1 1 0 0 1-1-1V7z"/>
+              </svg>
+              <span>复制报告</span>
+            </button>
+          </div>
+
+          <div id="diagnosticSummary" class="diagnostic-pills"></div>
+
+          <details id="diagnosticDetails" class="diagnostic-box" open>
+            <summary class="diagnostic-toggle">
+              <span>详细诊断列表 (<span id="diagnosticCount">0</span>)</span>
+            </summary>
+            <div class="diagnostic-toolbar">
+              <div class="filter-pills" role="tablist">
+                <button class="pill-tab is-active" type="button" data-filter="all">全部</button>
+                <button class="pill-tab" type="button" data-filter="error">错误</button>
+                <button class="pill-tab" type="button" data-filter="warning">警告</button>
+                <button class="pill-tab" type="button" data-filter="lossy">有损映射</button>
+              </div>
+              <input id="diagnosticSearch" class="search-input" type="search" placeholder="搜索 ID 或报错..." aria-label="搜索诊断">
+            </div>
+            <div id="diagnosticList" class="diagnostic-items"></div>
+          </details>
+        </div>
+
+        <div class="modal-footer">
+          <button id="modalDownloadButton" class="btn btn-primary" type="button">下载此包 ZIP</button>
+          <button id="modalCloseButton" class="btn btn-secondary" type="button">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden compatibility elements for tests & scripts -->
+    <div class="visually-hidden" aria-hidden="true">
+      <div id="sourceCard"><span id="sourceIcon"></span><strong id="sourceName"></strong><p id="sourceDetail"></p><span id="sourceSize"></span><span id="sourceFiles"></span><button id="changeInputButton"></button></div>
+      <section id="progressSection"><div id="packageRow"><span id="packageText"></span><progress id="packageProgress"></progress></div><div id="uploadRow"><span id="uploadText"></span><progress id="uploadProgress"></progress></div><div id="convertRow"><span id="convertText"></span><progress id="convertProgress"></progress></div><div id="downloadRow"><span id="downloadText"></span><progress id="downloadProgress"></progress></div></section>
+      <section id="resultSection"><div id="resultBanner"><div id="resultMark"></div><h2 id="result-title"></h2><p id="resultMessage"></p><button id="downloadButton"></button></div><button id="convertAnotherButton"></button><span id="auditBadge"></span><dl id="auditSummary"></dl><span id="resultEyebrow"></span></section>
+      <div id="actionBar"><div id="readyTitle"></div><div id="readyDetail"></div><button id="clearButton"></button></div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>Nexo 1.26</span>
+      <span class="dot-sep">·</span>
+      <span>CraftEngine 26.8</span>
+      <span class="dot-sep">·</span>
+      <span>Minecraft 1.21.11</span>
+    </footer>
+  </div>
+</body>
+</html>
