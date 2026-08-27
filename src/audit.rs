@@ -393,8 +393,12 @@ pub fn audit_resource_graph(input: &AuditInput<'_>, diagnostics: &mut Diagnostic
             format!("{}.bbmodel", blueprint)
         };
         // TS rewrites "/" to "\\" before join (Windows blueprint layout).
+        // On non-Windows hosts the copy stage writes nested slash-separated
+        // directories, so the check must use the platform separator there
+        // (TS's literal-backslash join could never resolve on Unix).
+        let separator = if cfg!(windows) { "\\" } else { "/" };
         let file = Path::new(&blueprint_root)
-            .join(name.replace('/', "\\"))
+            .join(name.replace('/', separator))
             .to_string_lossy()
             .into_owned();
         if !exists(&file) {
