@@ -11,9 +11,14 @@
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod data;
 pub mod diagnostics;
+pub mod io;
 pub mod json;
 pub mod resource_location;
+pub mod resources;
+pub mod sounds;
+pub mod source_namespace;
 
 /// Locked conversion targets, mirrored from the legacy TypeScript core.
 pub mod targets {

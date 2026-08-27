@@ -30,6 +30,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 thiserror = "2"
 walkdir = "2"
+regex = "1"
+unicode-normalization = "0.1"
+pathdiff = "0.2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
 eframe = { version = "0.36", optional = true }
